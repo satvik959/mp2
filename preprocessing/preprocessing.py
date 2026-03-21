@@ -9,7 +9,10 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split
-from typing import Tuple, Optional
+from sklearn.feature_extraction.text import TfidfVectorizer
+from pathlib import Path
+import pickle
+from typing import Tuple, Optional, Dict, Any
 
 
 class NetworkDataPreprocessor:
@@ -20,6 +23,7 @@ class NetworkDataPreprocessor:
         self.scaler = StandardScaler()
         self.protocol_encoder = LabelEncoder()
         self.label_encoder = LabelEncoder()
+        self.tfidf_vectorizer = TfidfVectorizer(max_features=300)
         self.feature_columns: Optional[list] = None
         self.is_fitted = False
     
@@ -49,7 +53,7 @@ class NetworkDataPreprocessor:
         else:
             df['protocol_encoded'] = self.protocol_encoder.transform(df['protocol'])
         
-        # Select features for ML
+        # Select structured numeric features for ML
         self.feature_columns = [
             'packet_size',
             'packet_rate',
@@ -61,7 +65,7 @@ class NetworkDataPreprocessor:
         # Extract features
         X = df[self.feature_columns].values
         
-        # Scale features
+        # Scale structured features
         if fit:
             X_scaled = self.scaler.fit_transform(X)
             self.is_fitted = True
@@ -69,6 +73,18 @@ class NetworkDataPreprocessor:
             if not self.is_fitted:
                 raise RuntimeError("Preprocessor not fitted. Call with fit=True first.")
             X_scaled = self.scaler.transform(X)
+
+        # Build TF-IDF features from packet Info text when available
+        if 'Info' in df.columns:
+            info_text = df['Info'].fillna('').astype(str)
+            if fit:
+                info_tfidf = self.tfidf_vectorizer.fit_transform(info_text)
+            else:
+                info_tfidf = self.tfidf_vectorizer.transform(info_text)
+
+            if hasattr(info_tfidf, 'toarray'):
+                info_tfidf = info_tfidf.toarray()
+            X_scaled = np.hstack([X_scaled, info_tfidf])
         
         # Encode labels
         if 'label' in df.columns:
@@ -98,11 +114,11 @@ class NetworkDataPreprocessor:
         numeric_cols = ['packet_size', 'packet_rate', 'connection_count', 'avg_packet_size']
         for col in numeric_cols:
             if col in df.columns:
-                df[col].fillna(df[col].median(), inplace=True)
+                df[col] = df[col].fillna(df[col].median())
         
         # Fill categorical with mode
         if 'protocol' in df.columns:
-            df['protocol'].fillna(df['protocol'].mode()[0], inplace=True)
+            df['protocol'] = df['protocol'].fillna(df['protocol'].mode()[0])
         
         return df
     
@@ -133,6 +149,45 @@ class NetworkDataPreprocessor:
         if not self.is_fitted:
             return {}
         return dict(enumerate(self.label_encoder.classes_))
+
+    def save_artifacts(self, output_dir: str = '../artifacts') -> Dict[str, str]:
+        """Persist fitted preprocessing artifacts to disk."""
+        output = Path(output_dir)
+        output.mkdir(parents=True, exist_ok=True)
+
+        scaler_path = output / 'scaler.pkl'
+        protocol_encoder_path = output / 'protocol_encoder.pkl'
+        label_encoder_path = output / 'label_encoder.pkl'
+        tfidf_vectorizer_path = output / 'tfidf_vectorizer.pkl'
+        preprocessor_path = output / 'preprocessor.pkl'
+
+        with scaler_path.open('wb') as f:
+            pickle.dump(self.scaler, f)
+        with protocol_encoder_path.open('wb') as f:
+            pickle.dump(self.protocol_encoder, f)
+        with label_encoder_path.open('wb') as f:
+            pickle.dump(self.label_encoder, f)
+        with tfidf_vectorizer_path.open('wb') as f:
+            pickle.dump(self.tfidf_vectorizer, f)
+        with preprocessor_path.open('wb') as f:
+            pickle.dump(self, f)
+
+        return {
+            'scaler': str(scaler_path),
+            'protocol_encoder': str(protocol_encoder_path),
+            'label_encoder': str(label_encoder_path),
+            'tfidf_vectorizer': str(tfidf_vectorizer_path),
+            'preprocessor': str(preprocessor_path),
+        }
+
+    @classmethod
+    def load_artifacts(cls, preprocessor_path: str) -> 'NetworkDataPreprocessor':
+        """Load a previously fitted preprocessor object from disk."""
+        with Path(preprocessor_path).open('rb') as f:
+            obj: Any = pickle.load(f)
+        if not isinstance(obj, cls):
+            raise TypeError('Loaded object is not NetworkDataPreprocessor')
+        return obj
 
 
 # Test/Demo code

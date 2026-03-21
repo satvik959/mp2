@@ -14,7 +14,7 @@ import pickle
 import time
 from collections import deque
 from pathlib import Path
-from typing import Deque, List, Optional
+from typing import Deque, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -129,14 +129,28 @@ class ModelRuntime:
                 model.eval()
             return model
 
+        if suffix in {".keras", ".h5"}:
+            try:
+                keras_models = __import__("tensorflow.keras.models", fromlist=["load_model"])
+                return keras_models.load_model(path)
+            except ImportError as exc:
+                raise RuntimeError(
+                    "TensorFlow is required for .keras/.h5 models. Install tensorflow to use this model."
+                ) from exc
+
         raise RuntimeError(f"Unsupported model format: {path}")
 
-    def predict(self, features: np.ndarray) -> List[str]:
+    def predict(self, features: Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]) -> List[str]:
         if self.model is None:
+            if isinstance(features, tuple):
+                return ["normal"] * len(features[0])
             return ["normal"] * len(features)
 
         if hasattr(self.model, "predict"):
-            raw = self.model.predict(features)
+            predict_input = features
+            if isinstance(features, tuple):
+                predict_input = [features[0], features[1]]
+            raw = self.model.predict(predict_input)
             return self._decode(raw)
 
         try:
@@ -198,7 +212,7 @@ class StreamingPipeline:
             buffer.append(row)
         return len(records)
 
-    def stage_preprocessing(self, batch_df: pd.DataFrame) -> np.ndarray:
+    def stage_preprocessing(self, batch_df: pd.DataFrame) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         packet_df = self._convert_batch_to_packet_frame(batch_df)
         feature_df = self.dataset_builder.build_dataset(packet_df, window_size=1.0)
 
@@ -211,10 +225,28 @@ class StreamingPipeline:
                 text_features = text_features.toarray()
             features = np.hstack([features, text_features])
 
+        if self.runtime.model is not None and hasattr(self.runtime.model, "inputs"):
+            input_count = len(getattr(self.runtime.model, "inputs", []))
+            if input_count >= 2:
+                sequence_features = features.reshape(features.shape[0], 1, features.shape[1])
+                graph_features = self._build_graph_features(feature_df)
+                return sequence_features, graph_features
+
         return features
 
-    def stage_inference(self, features: np.ndarray) -> List[str]:
+    def stage_inference(self, features: Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]) -> List[str]:
         return self.runtime.predict(features)
+
+    @staticmethod
+    def _build_graph_features(feature_df: pd.DataFrame) -> np.ndarray:
+        src_hash = feature_df["src_ip"].astype(str).apply(lambda x: hash(x) % 1000).to_numpy(dtype=np.float32)
+        dst_hash = feature_df["dst_ip"].astype(str).apply(lambda x: hash(x) % 1000).to_numpy(dtype=np.float32)
+        edge_activity = feature_df["connection_count"].to_numpy(dtype=np.float32)
+        packet_rate = feature_df["packet_rate"].to_numpy(dtype=np.float32)
+
+        graph_features = np.stack([src_hash, dst_hash, edge_activity, packet_rate], axis=1)
+        graph_features /= np.array([1000.0, 1000.0, 50.0, 50.0], dtype=np.float32)
+        return graph_features
 
     @staticmethod
     def _convert_batch_to_packet_frame(batch_df: pd.DataFrame) -> pd.DataFrame:
