@@ -4,13 +4,21 @@ Packet Capture Module
 Captures live network packets using Scapy and extracts relevant features.
 """
 
-from scapy.all import sniff, IP, TCP, UDP, wrpcap
+from scapy.all import sniff, IP, TCP, UDP, wrpcap, conf
 import pandas as pd
 import time
 from typing import List, Dict, Optional
 from datetime import datetime
+import signal
 
+STOP_CAPTURE = False
 
+def handle_interrupt(signum, frame):
+    global STOP_CAPTURE
+    print("\n🛑 Stopping capture...")
+    STOP_CAPTURE = True
+
+signal.signal(signal.SIGINT, handle_interrupt)
 class PacketCapture:
     """Captures and processes network packets in real-time."""
     
@@ -56,6 +64,8 @@ class PacketCapture:
                     dst_port = packet[UDP].dport
                 else:
                     protocol_name = f'IP-{protocol}'
+                    
+                info = packet.summary()
                 
                 return {
                     'timestamp': timestamp,
@@ -65,7 +75,8 @@ class PacketCapture:
                     'packet_size': packet_length,
                     'src_port': src_port,
                     'dst_port': dst_port,
-                    'flags': str(flags) if flags else None
+                    'flags': str(flags) if flags else None,
+                    'Info': info
                 }
             
             return None
@@ -85,54 +96,42 @@ class PacketCapture:
         if packet_info:
             self.packets_data.append(packet_info)
     
-    def capture_packets(self, duration: int = 60, interface: Optional[str] = None, 
-                       count: Optional[int] = None) -> pd.DataFrame:
-        """
-        Capture network packets for specified duration.
-        
-        Args:
-            duration: Capture duration in seconds (default: 60)
-            interface: Network interface to capture on (None for default)
-            count: Maximum number of packets to capture (None for unlimited)
-            
-        Returns:
-            DataFrame with captured packet data
-        """
+    def capture_packets(self, duration: int = 5, interface: Optional[str] = None) -> pd.DataFrame:
         print(f"🔍 Starting packet capture...")
         print(f"   Duration: {duration}s")
         print(f"   Interface: {interface or 'default'}")
         
         self.packets_data = []
         self.start_time = time.time()
-        
+        conf.use_pcap = True
+
         try:
-            # Capture packets
-            sniff(
-                iface=interface,
-                prn=self._packet_handler,
-                timeout=duration,
-                count=count,
-                store=False
-            )
-            
+            start = time.time()
+
+            # 🔥 KEY FIX: loop with small timeout
+            while time.time() - start < duration and not STOP_CAPTURE:
+                sniff(
+                    iface=interface,
+                    prn=self._packet_handler,
+                    timeout=1,      # ✅ VERY IMPORTANT
+                    store=False,
+                    filter="ip",
+                    promisc=True
+                )
+
             print(f"✓ Captured {len(self.packets_data)} packets")
-            
-            # Convert to DataFrame
+
             if self.packets_data:
-                df = pd.DataFrame(self.packets_data)
-                return df
+                return pd.DataFrame(self.packets_data)
             else:
                 print("⚠️  No packets captured")
                 return pd.DataFrame()
-                
-        except PermissionError:
-            print("❌ Permission denied. Run with sudo/administrator privileges.")
-            return pd.DataFrame()
-        except Exception as e:
-            print(f"❌ Capture error: {e}")
-            return pd.DataFrame()
+
+        except KeyboardInterrupt:
+            print("\n🛑 Capture interrupted!")
+            raise
     
-    def save_to_csv(self, df: pd.DataFrame, filepath: str = '../data/captured_packets.csv') -> None:
+    def save_to_csv(self, df: pd.DataFrame, filepath: str = 'data/captured_packets.csv') -> None:
         """
         Save captured packets to CSV file.
         
@@ -149,26 +148,23 @@ class PacketCapture:
 
 # Demo/Test code
 if __name__ == "__main__":
-    print("=" * 60)
-    print("  PACKET CAPTURE MODULE - TEST")
-    print("=" * 60)
-    print("\n⚠️  Note: This requires root/admin privileges")
-    print("   Run with: sudo python packet_capture.py\n")
-    
-    # Create capture instance
+    import sys
+
+    print("🚀 Starting Packet Capture (Replace Mode)...")
+
     capture = PacketCapture()
-    
-    # Capture for 10 seconds (adjust as needed)
-    df = capture.capture_packets(duration=10)
-    
-    if not df.empty:
-        print(f"\n📊 Captured Packets Summary:")
-        print(f"   Total: {len(df)}")
-        print(f"   Protocols: {df['protocol'].value_counts().to_dict()}")
-        print(f"\n📋 Sample Data:")
-        print(df.head())
-        
-        # Save to file
-        capture.save_to_csv(df)
-    else:
-        print("\n⚠️  No packets captured. Check permissions and network activity.")
+
+    try:
+        while not STOP_CAPTURE:
+            df = capture.capture_packets(duration=5, interface="en0")
+
+            if not df.empty:
+                df.to_csv("data/captured_packets.csv", index=False)
+                print(f"💾 Replaced CSV with {len(df)} packets")
+            else:
+                print("⚠️ No packets captured in this cycle")
+        print("✅ Capture fully stopped")
+
+    except KeyboardInterrupt:
+        print("\n🛑 Capture stopped by user")
+        sys.exit(0)
