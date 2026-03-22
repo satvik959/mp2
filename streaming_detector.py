@@ -93,6 +93,8 @@
 #         self.label_encoder = self._load_optional_pickle(label_encoder_path)
 #         self.vectorizer = self._load_optional_pickle(vectorizer_path)
 #         self.model = self._load_model(model_path)
+#         if self.label_encoder is not None:
+#             print("LABEL CLASSES:", self.label_encoder.classes_)
 
 #     @staticmethod
 #     def _load_optional_pickle(path: Optional[Path]):
@@ -215,9 +217,14 @@
 #     def stage_preprocessing(self, batch_df: pd.DataFrame) -> Union[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
 #         packet_df = self._convert_batch_to_packet_frame(batch_df)
 #         feature_df = self.dataset_builder.build_dataset(packet_df, window_size=1.0)
+#         feature_df["flags"] = batch_df["flags"].values
 
 #         if "Info" in batch_df.columns:
 #             feature_df["Info"] = batch_df["Info"].values
+#         if "flags" in batch_df.columns:
+#             feature_df["flags"] = batch_df["flags"].values
+#         else:
+#             feature_df["flags"] = "NONE"
 
 #         fit = not self.preprocessor.is_fitted and not self._preprocessor_loaded_from_disk
 #         features, _ = self.preprocessor.preprocess_data(feature_df, fit=False)
@@ -361,6 +368,10 @@
 #             batch_counter += 1
 #             batch_df = pop_batch(buffer, args.batch_size)
 #             features = pipeline.stage_preprocessing(batch_df)
+#             print("\n🔍 DEBUG INFO")
+#             print("RAW FLAGS:", batch_df.get('flags', 'NO FLAGS'))
+#             print("RAW PROTOCOL:", batch_df['protocol'].values)
+#             print("FEATURE VECTOR:", features)
 #             predictions = pipeline.stage_inference(features)
 #             print_batch_predictions(batch_counter, predictions)
 
@@ -475,6 +486,8 @@ class ModelRuntime:
         self.label_encoder = self._load_optional_pickle(label_encoder_path)
         self.vectorizer = self._load_optional_pickle(vectorizer_path)
         self.model = self._load_model(model_path)
+        if self.label_encoder is not None:
+            print("LABEL CLASSES:", self.label_encoder.classes_)
 
     @staticmethod
     def _load_optional_pickle(path: Optional[Path]):
@@ -688,8 +701,28 @@ def pop_batch(buffer: Deque[dict], batch_size: int) -> pd.DataFrame:
 
 def print_batch_predictions(batch_number: int, predictions: List[str]) -> None:
     print(f"\n[Batch {batch_number}]")
+
+    total = len(predictions)
+    attack_count = predictions.count('0')
+
+    # 🔹 Packet-level output
     for prediction in predictions:
-        print(prediction)
+        if prediction == '1':
+            print("🟢 NORMAL")
+        else:
+            print("🔴 ANOMALY")
+
+    # 🔹 Batch-level intelligence
+    print("\n📊 Batch Summary:")
+
+    if attack_count == 0:
+        print("🟢 All Normal Traffic")
+    elif attack_count < total * 0.3:
+        print("🟡 Minor Anomalies (Probably Safe)")
+    elif attack_count < total * 0.7:
+        print("🟠 Suspicious Activity Detected")
+    else:
+        print("🔴 High Probability Attack 🚨")
 
 
 def parse_args() -> argparse.Namespace:

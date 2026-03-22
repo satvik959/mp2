@@ -311,10 +311,16 @@ class NetworkDataPreprocessor:
 
             if fit:
                 df['flags_encoded'] = self.flags_encoder.fit_transform(df['flags'])
+            # else:
+            #     known_flags = set(self.flags_encoder.classes_)
+            #     df['flags_encoded'] = [
+            #         self.flags_encoder.transform([f])[0] if f in known_flags else -1
+            #         for f in df['flags']
+            #     ]
             else:
-                known_flags = set(self.flags_encoder.classes_)
                 df['flags_encoded'] = [
-                    self.flags_encoder.transform([f])[0] if f in known_flags else -1
+                    self.flags_encoder.transform([f])[0] if f in self.flags_encoder.classes_
+                    else self.flags_encoder.transform(['ACK'])[0]   # default safe flag
                     for f in df['flags']
                 ]
         else:
