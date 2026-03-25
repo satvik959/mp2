@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any, Dict, List, Tuple
 
@@ -12,6 +13,30 @@ from crewai import Agent, Crew, Process, Task
 ALLOWED_PREDICTIONS = {"flood", "probe", "brute_force", "exploit", "malware", "normal"}
 ALLOWED_CONFIDENCE = {"low", "medium", "high"}
 ALLOWED_PRIORITY = {"low", "medium", "high", "critical"}
+
+
+def _validate_provider_key(llm_model: str) -> None:
+	"""Validate provider-specific API key before crew kickoff."""
+	model_name = str(llm_model or "").strip().lower()
+
+	# Gemini-first default path.
+	if model_name.startswith("gemini") or model_name.startswith("google/"):
+		gemini_key = os.getenv("GEMINI_API_KEY")
+		google_key = os.getenv("GOOGLE_API_KEY")
+		if not gemini_key and not google_key:
+			raise RuntimeError(
+				"Gemini API key not found. Set GEMINI_API_KEY or GOOGLE_API_KEY before running agents."
+			)
+		return
+
+	# OpenAI path is only used when explicitly requested by model string.
+	if model_name.startswith("gpt") or model_name.startswith("openai/"):
+		if not os.getenv("OPENAI_API_KEY"):
+			raise RuntimeError(
+				"OpenAI model requested but OPENAI_API_KEY is missing. "
+				"Use a Gemini model or set OPENAI_API_KEY."
+			)
+
 
 
 def _coerce_float(value: Any, default: float = 0.0) -> float:
@@ -145,9 +170,10 @@ def build_agents(llm_model: str) -> Tuple[Agent, Agent]:
 	return analyzer_agent, remediation_agent
 
 
-def run_agents(analysis_input: Dict[str, Any], llm_model: str = "gpt-4o-mini") -> Dict[str, Any]:
+def run_agents(analysis_input: Dict[str, Any], llm_model: str = "gemini/gemini-1.5-flash") -> Dict[str, Any]:
 	"""Run Analyzer -> Remediation sequentially and return structured outputs."""
 	clean_input = _sanitize_analysis_input(analysis_input)
+	_validate_provider_key(llm_model)
 	analyzer_agent, remediation_agent = build_agents(llm_model)
 
 	analyzer_task = Task(
@@ -173,9 +199,17 @@ def run_agents(analysis_input: Dict[str, Any], llm_model: str = "gpt-4o-mini") -
 		process=Process.sequential,
 		verbose=False,
 	)
-	analyzer_raw_text = str(analyzer_crew.kickoff())
-	analyzer_parsed = _extract_json_payload(analyzer_raw_text)
-	analyzer_output = _sanitize_analyzer_output(analyzer_parsed)
+	try:
+		analyzer_raw_text = str(analyzer_crew.kickoff())
+		analyzer_parsed = _extract_json_payload(analyzer_raw_text)
+		analyzer_output = _sanitize_analyzer_output(analyzer_parsed)
+	except Exception:
+		analyzer_output = {
+			"anomaly_type": "unknown",
+			"cause": "analysis unavailable (LLM provider error)",
+			"confidence": "low",
+			"evidence": [],
+		}
 
 	remediation_task = Task(
 		description=(
@@ -200,9 +234,16 @@ def run_agents(analysis_input: Dict[str, Any], llm_model: str = "gpt-4o-mini") -
 		process=Process.sequential,
 		verbose=False,
 	)
-	remediation_raw_text = str(remediation_crew.kickoff())
-	remediation_parsed = _extract_json_payload(remediation_raw_text)
-	remediation_output = _sanitize_remediation_output(remediation_parsed)
+	try:
+		remediation_raw_text = str(remediation_crew.kickoff())
+		remediation_parsed = _extract_json_payload(remediation_raw_text)
+		remediation_output = _sanitize_remediation_output(remediation_parsed)
+	except Exception:
+		remediation_output = {
+			"recommended_actions": ["Retry agent analysis later", "Collect additional packet evidence"],
+			"priority": "medium",
+			"notes": "remediation unavailable (LLM provider error)",
+		}
 
 	# Fallback minimums if LLM returns unusable payloads.
 	if not analyzer_output["cause"]:
