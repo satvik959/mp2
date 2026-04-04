@@ -3,3 +3,6 @@ venv/
 venv/
 .DS_Store
 artifacts/*.pkl 
+.env
+__pycache__/
+*.pyc
