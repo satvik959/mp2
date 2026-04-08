@@ -7,11 +7,13 @@ CSV → Build Features → LSTM+GCN Predict → Agent Analysis → Output
 import argparse
 import sys
 import pickle
+from collections import Counter, defaultdict
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 from pathlib import Path
 import os
+from typing import Any, Dict, List, Optional
 
 # Load environment variables from .env explicitly
 from dotenv import load_dotenv
@@ -23,6 +25,172 @@ sys.path.insert(0, str(Path(__file__).parent))
 from agents import run_agents
 from dataset.dataset_builder import DatasetBuilder
 from sklearn.feature_extraction.text import TfidfVectorizer
+
+
+def _clean_text(value: Any, default: str = "N/A") -> str:
+    if value is None:
+        return default
+    try:
+        if pd.isna(value):
+            return default
+    except Exception:
+        pass
+
+    text = str(value).strip()
+    return text if text else default
+
+
+def _is_benign_label(label: Any) -> bool:
+    return str(label).strip().lower() == "benign"
+
+
+def _get_ip_column(batch_df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    for column in candidates:
+        if column in batch_df.columns:
+            return column
+    return None
+
+
+def _detect_hub_ip(batch_df: pd.DataFrame, configured_hub: str = "") -> str:
+    configured_hub = _clean_text(configured_hub, "")
+    if configured_hub:
+        return configured_hub
+
+    for candidate in ("dst_ip", "Destination", "dst", "destination"):
+        if candidate in batch_df.columns:
+            values = batch_df[candidate].dropna().astype(str)
+            if not values.empty:
+                return str(values.value_counts().idxmax())
+
+    for candidate in ("src_ip", "Source", "src", "source"):
+        if candidate in batch_df.columns:
+            values = batch_df[candidate].dropna().astype(str)
+            if not values.empty:
+                return str(values.value_counts().idxmax())
+
+    return "UNKNOWN"
+
+
+def _build_connectivity_rows(batch_df: pd.DataFrame, hub_ip: str) -> List[Dict[str, str]]:
+    src_col = _get_ip_column(batch_df, ["src_ip", "Source", "src", "source"])
+    dst_col = _get_ip_column(batch_df, ["dst_ip", "Destination", "dst", "destination"])
+    if src_col is None or dst_col is None:
+        return []
+
+    subset = batch_df[[src_col, dst_col]].copy()
+    subset[src_col] = subset[src_col].astype(str)
+    subset[dst_col] = subset[dst_col].astype(str)
+
+    if hub_ip != "UNKNOWN":
+        subset = subset[(subset[src_col] == hub_ip) | (subset[dst_col] == hub_ip)]
+
+    rows: List[Dict[str, str]] = []
+    seen = set()
+    for _, row in subset.dropna().iterrows():
+        src_ip = _clean_text(row[src_col])
+        dst_ip = _clean_text(row[dst_col])
+        key = (src_ip, dst_ip)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"source": src_ip, "destination": dst_ip})
+    return rows
+
+
+def _print_table(title: str, headers: List[str], rows: List[List[str]]) -> None:
+    print(title)
+    if not rows:
+        print("   (no rows)")
+        return
+
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for idx, cell in enumerate(row):
+            widths[idx] = max(widths[idx], len(cell))
+
+    header_line = " | ".join(header.ljust(widths[idx]) for idx, header in enumerate(headers))
+    separator = "-+-".join("-" * width for width in widths)
+    print(f"   {header_line}")
+    print(f"   {separator}")
+    for row in rows:
+        print("   " + " | ".join(cell.ljust(widths[idx]) for idx, cell in enumerate(row)))
+
+
+def _print_batch_connectivity(batch_idx: int, batch_df: pd.DataFrame, hub_ip: str) -> None:
+    connectivity_rows = _build_connectivity_rows(batch_df, hub_ip)
+    connected_systems = sorted({
+        row["source"] if row["source"] != hub_ip else row["destination"]
+        for row in connectivity_rows
+        if row["source"] != hub_ip or row["destination"] != hub_ip
+    })
+
+    print(f"\n📡 BATCH {batch_idx} CONNECTIVITY SUMMARY")
+    print(f"   Hub IP: {hub_ip}")
+    print(f"   Connected systems ({len(connected_systems)}): {', '.join(connected_systems) if connected_systems else 'None'}")
+
+    pair_rows = [[row["source"], row["destination"]] for row in connectivity_rows]
+    _print_table("   Connection pairs:", ["source", "destination"], pair_rows)
+
+
+def _print_batch_non_benign_report(batch_idx: int, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    non_benign_rows = [record for record in records if not record["is_benign"]]
+    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for record in non_benign_rows:
+        grouped[record["system_ip"]].append(record)
+
+    print(f"\n🚨 BATCH {batch_idx} NON-BENIGN REPORT")
+    if not grouped:
+        print("   No non-benign packets in this batch.")
+        return non_benign_rows
+
+    for system_ip in sorted(grouped):
+        system_rows = grouped[system_ip]
+        table_rows = [
+            [
+                str(item["packet_num"]),
+                item["predicted_label"],
+                f"{item['confidence']:.1%}",
+                item["src_ip"],
+                item["dst_ip"],
+            ]
+            for item in system_rows
+        ]
+        print(f"   System: {system_ip} ({len(system_rows)} packet(s))")
+        _print_table(
+            "",
+            ["packet", "class", "confidence", "src_ip", "dst_ip"],
+            table_rows,
+        )
+
+    return non_benign_rows
+
+
+def _print_final_summary(prediction_records: List[Dict[str, Any]]) -> None:
+    print("\n" + "=" * 80)
+    print("FINAL SUMMARY")
+    print("=" * 80)
+
+    total_packets = len(prediction_records)
+    class_counts = Counter(record["predicted_label"] for record in prediction_records)
+    benign_count = sum(1 for record in prediction_records if record["is_benign"])
+    non_benign_count = total_packets - benign_count
+    system_counts = Counter(record["system_ip"] for record in prediction_records if not record["is_benign"])
+
+    print(f"Total packets     : {total_packets}")
+    print(f"Total benign      : {benign_count}")
+    print(f"Total non-benign  : {non_benign_count}")
+
+    print("\nPer-class counts:")
+    for label, count in class_counts.most_common():
+        print(f"   {label:14s} {count}")
+
+    print("\nTop 5 suspicious systems:")
+    if not system_counts:
+        print("   None")
+        return
+
+    rows = [[system_ip, str(count)] for system_ip, count in system_counts.most_common(5)]
+    _print_table("", ["system_ip", "non_benign_count"], rows)
 
 print("\n" + "="*80)
 print("🔴 LSTM+GCN STREAMING DETECTOR → CREWAL ANALYSIS")
@@ -36,12 +204,15 @@ parser.add_argument("--label-encoder-path", required=True)
 parser.add_argument("--preprocessor-path", required=True)
 parser.add_argument("--batch-size", type=int, default=10)
 parser.add_argument("--llm-model", default="groq/llama-3.1-8b-instant")
+parser.add_argument("--hub-ip", default="", help="Optional fixed hub IP. If omitted, the hub is inferred per batch.")
 args = parser.parse_args()
 
 print(f"\n📋 CSV: {args.csv_path}")
 print(f"   Model: {args.model_path}")
 print(f"   Batch size: {args.batch_size}\n")
 print(f"   LLM model: {args.llm_model}\n")
+if args.hub_ip:
+    print(f"   Hub IP: {args.hub_ip}\n")
 
 # ============================================================================
 # LOAD ARTIFACTS
@@ -71,15 +242,65 @@ print("─"*80)
 df = pd.read_csv(args.csv_path)
 print(f"✅ Loaded {len(df)} packets")
 
+timestamp_source = (
+    pd.to_numeric(df['timestamp'], errors='coerce')
+    if 'timestamp' in df.columns
+    else pd.to_numeric(df['Time'], errors='coerce')
+    if 'Time' in df.columns
+    else pd.Series(np.arange(len(df), dtype=float))
+)
+src_source = (
+    df['src_ip']
+    if 'src_ip' in df.columns
+    else df['Source']
+    if 'Source' in df.columns
+    else pd.Series(['0.0.0.0'] * len(df))
+)
+dst_source = (
+    df['dst_ip']
+    if 'dst_ip' in df.columns
+    else df['Destination']
+    if 'Destination' in df.columns
+    else pd.Series(['0.0.0.0'] * len(df))
+)
+protocol_source = (
+    df['protocol']
+    if 'protocol' in df.columns
+    else df['Protocol']
+    if 'Protocol' in df.columns
+    else pd.Series(['TCP'] * len(df))
+)
+packet_size_source = (
+    df['packet_size']
+    if 'packet_size' in df.columns
+    else df['Length']
+    if 'Length' in df.columns
+    else pd.Series([0] * len(df))
+)
+src_port_source = df['src_port'] if 'src_port' in df.columns else pd.Series([None] * len(df))
+dst_port_source = df['dst_port'] if 'dst_port' in df.columns else pd.Series([None] * len(df))
+flags_source = df['flags'] if 'flags' in df.columns else pd.Series(['NONE'] * len(df))
+
 # Build features using DatasetBuilder
 builder = DatasetBuilder()
 feature_df = builder.build_dataset(
-    df[['timestamp', 'src_ip', 'dst_ip', 'protocol', 'packet_size', 'src_port', 'dst_port', 'flags']],
+    pd.DataFrame(
+        {
+            'timestamp': timestamp_source,
+            'src_ip': src_source,
+            'dst_ip': dst_source,
+            'protocol': protocol_source,
+            'packet_size': packet_size_source,
+            'src_port': src_port_source,
+            'dst_port': dst_port_source,
+            'flags': flags_source,
+        }
+    ),
     window_size=1.0
 )
 feature_df['label'] = df['label'].values if 'label' in df.columns else 'benign'
-feature_df['info'] = df['info'].values if 'info' in df.columns else 'packet'
-feature_df['flags'] = df['flags'].values
+feature_df['info'] = df['info'].values if 'info' in df.columns else df['Info'].values if 'Info' in df.columns else 'packet'
+feature_df['flags'] = df['flags'].values if 'flags' in df.columns else 'NONE'
 print(f"✅ Features built: {feature_df.shape}\n")
 
 # ============================================================================
@@ -181,6 +402,7 @@ print("─"*80)
 
 all_predictions = []
 anomalies = []
+prediction_records = []
 
 num_batches = (len(X_seq) + args.batch_size - 1) // args.batch_size
 
@@ -189,11 +411,13 @@ for batch_idx in range(num_batches):
     end_idx = min(start_idx + args.batch_size, len(X_seq))
     X_batch = X_seq[start_idx:end_idx]
     G_batch = G_seq[start_idx:end_idx]
+    batch_df = df.iloc[start_idx:end_idx].copy()
     
     # Predict
     probs = model.predict([X_batch, G_batch], verbose=0)
     preds = np.argmax(probs, axis=1)
     all_predictions.extend(preds)
+    batch_records = []
     
     # Show batch
     pred_classes = label_encoder.inverse_transform(preds)
@@ -203,13 +427,33 @@ for batch_idx in range(num_batches):
         conf = np.max(prob)
         seq_idx = start_idx + i
         pkt_idx = seq_idx + seq_length
-        is_benign = pred_label.lower() == "benign" or pred_label == "1"
+        is_benign = _is_benign_label(pred_label)
+        row_idx = min(pkt_idx - 1, len(df) - 1)
+        src_ip = _clean_text(
+            df.iloc[row_idx]['src_ip'] if 'src_ip' in df.columns else df.iloc[row_idx]['Source'] if 'Source' in df.columns else 'N/A'
+        )
+        dst_ip = _clean_text(
+            df.iloc[row_idx]['dst_ip'] if 'dst_ip' in df.columns else df.iloc[row_idx]['Destination'] if 'Destination' in df.columns else 'N/A'
+        )
+        system_ip = src_ip if src_ip != 'N/A' else dst_ip
         emoji = "🟢" if is_benign else "🔴"
         print(f"   {emoji} Seq {seq_idx:3d} (Pkt {pkt_idx:3d}): {pred_label:12s} ({conf:5.1%})")
+
+        record = {
+            'batch_number': batch_idx + 1,
+            'sequence_index': seq_idx,
+            'packet_num': pkt_idx,
+            'predicted_label': pred_label,
+            'confidence': float(conf),
+            'is_benign': is_benign,
+            'system_ip': system_ip,
+            'src_ip': src_ip,
+            'dst_ip': dst_ip,
+        }
+        batch_records.append(record)
+        prediction_records.append(record)
         
         if not is_benign:
-            src_ip = df.iloc[min(pkt_idx-1, len(df)-1)]['src_ip'] if 'src_ip' in df.columns else 'N/A'
-            dst_ip = df.iloc[min(pkt_idx-1, len(df)-1)]['dst_ip'] if 'dst_ip' in df.columns else 'N/A'
             anomalies.append({
                 'packet_num': pkt_idx,
                 'prediction': pred_label,
@@ -225,6 +469,10 @@ for batch_idx in range(num_batches):
                 'avg_packet_size': float(feature_df['avg_packet_size'].mean()) if 'avg_packet_size' in feature_df.columns else 0.0,
             })
 
+    hub_ip = _detect_hub_ip(batch_df, args.hub_ip)
+    _print_batch_connectivity(batch_idx + 1, batch_df, hub_ip)
+    _print_batch_non_benign_report(batch_idx + 1, batch_records)
+
 # ============================================================================
 # SUMMARY
 # ============================================================================
@@ -232,16 +480,26 @@ print("\n" + "─"*80)
 print("STEP 6️⃣  DETECTION SUMMARY")
 print("─"*80 + "\n")
 
-pred_classes = label_encoder.inverse_transform(np.array(all_predictions))
-print("📊 Distribution:")
-unique, counts = np.unique(pred_classes, return_counts=True)
-for cls, count in zip(unique, counts):
-    pct = 100 * count / len(pred_classes)
-    print(f"   {str(cls):12s}: {count:4d} ({pct:5.1f}%)")
+if len(all_predictions) == 0:
+    pred_classes = np.array([])
+else:
+    pred_classes = label_encoder.inverse_transform(np.array(all_predictions))
 
-pred_classes_str = np.array([str(x) for x in pred_classes])
-benign = np.sum((pred_classes_str == 'benign') | (pred_classes_str == '1'))
-malicious = len(pred_classes) - benign
+print("📊 Distribution:")
+if len(pred_classes) == 0:
+    print("   No predictions available.")
+    benign = 0
+    malicious = 0
+else:
+    unique, counts = np.unique(pred_classes, return_counts=True)
+    for cls, count in zip(unique, counts):
+        pct = 100 * count / len(pred_classes)
+        print(f"   {str(cls):12s}: {count:4d} ({pct:5.1f}%)")
+
+    pred_classes_str = np.array([str(x) for x in pred_classes])
+    benign = np.sum(pred_classes_str == 'benign')
+    malicious = len(pred_classes) - benign
+
 print(f"\n📈 Total: {len(pred_classes)} | Benign: {benign} | Malicious: {malicious}\n")
 
 # ============================================================================
@@ -280,6 +538,8 @@ if len(anomalies) > 0:
         print(f"   ... and {len(anomalies)-3} more anomalies detected\n")
 else:
     print("\n✅ NO ANOMALIES DETECTED - NETWORK SECURE\n")
+
+_print_final_summary(prediction_records)
 
 print("="*80)
 print("✅ DETECTION & ANALYSIS COMPLETE")
