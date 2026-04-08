@@ -131,13 +131,13 @@ def _fallback_response(clean_input: Dict[str, Any], error: str = "LLM failed") -
     }
 
 
-def run_agents(payload: Dict[str, Any], llm_model: str = "groq/llama-3.1-8b-instant") -> Dict[str, Any]:
+def run_agents(payload: Dict[str, Any], llm_model: str = "gemini/gemini-1.5-flash") -> Dict[str, Any]:
     clean_input = _sanitize_input(payload)
 
     try:
         _validate_provider_key(llm_model)
 
-        llm = LLM(model=llm_model, max_tokens=300, temperature=0.1)
+        llm = LLM(model=llm_model, max_tokens=220, temperature=0.1)
 
         agent = Agent(
             role="SOC analyst",

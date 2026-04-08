@@ -203,8 +203,10 @@ parser.add_argument("--model-path", required=True)
 parser.add_argument("--label-encoder-path", required=True)
 parser.add_argument("--preprocessor-path", required=True)
 parser.add_argument("--batch-size", type=int, default=10)
-parser.add_argument("--llm-model", default="groq/llama-3.1-8b-instant")
+parser.add_argument("--llm-model", default="gemini/gemini-1.5-flash")
 parser.add_argument("--hub-ip", default="", help="Optional fixed hub IP. If omitted, the hub is inferred per batch.")
+parser.add_argument("--verbose-sequences", action="store_true", help="Print every packet prediction instead of compact batch summaries.")
+parser.add_argument("--max-batch-details", type=int, default=3, help="Number of batches to print in detail before suppressing batch-by-batch output.")
 args = parser.parse_args()
 
 print(f"\n📋 CSV: {args.csv_path}")
@@ -402,7 +404,6 @@ print("─"*80)
 
 all_predictions = []
 anomalies = []
-prediction_records = []
 
 num_batches = (len(X_seq) + args.batch_size - 1) // args.batch_size
 
@@ -411,67 +412,48 @@ for batch_idx in range(num_batches):
     end_idx = min(start_idx + args.batch_size, len(X_seq))
     X_batch = X_seq[start_idx:end_idx]
     G_batch = G_seq[start_idx:end_idx]
-    batch_df = df.iloc[start_idx:end_idx].copy()
     
     # Predict
     probs = model.predict([X_batch, G_batch], verbose=0)
     preds = np.argmax(probs, axis=1)
     all_predictions.extend(preds)
-    batch_records = []
     
-    # Show batch
     pred_classes = label_encoder.inverse_transform(preds)
-    print(f"\n📊 Batch {batch_idx+1}/{num_batches} ({len(X_batch)} sequences)")
-    for i, (pred_class, prob) in enumerate(zip(pred_classes, probs)):
-        pred_label = str(pred_class)
-        conf = np.max(prob)
-        seq_idx = start_idx + i
-        pkt_idx = seq_idx + seq_length
-        is_benign = _is_benign_label(pred_label)
-        row_idx = min(pkt_idx - 1, len(df) - 1)
-        src_ip = _clean_text(
-            df.iloc[row_idx]['src_ip'] if 'src_ip' in df.columns else df.iloc[row_idx]['Source'] if 'Source' in df.columns else 'N/A'
-        )
-        dst_ip = _clean_text(
-            df.iloc[row_idx]['dst_ip'] if 'dst_ip' in df.columns else df.iloc[row_idx]['Destination'] if 'Destination' in df.columns else 'N/A'
-        )
-        system_ip = src_ip if src_ip != 'N/A' else dst_ip
-        emoji = "🟢" if is_benign else "🔴"
-        print(f"   {emoji} Seq {seq_idx:3d} (Pkt {pkt_idx:3d}): {pred_label:12s} ({conf:5.1%})")
+    benign_count = sum(1 for pred_class in pred_classes if str(pred_class).lower() == "benign" or str(pred_class) == "1")
+    anomaly_count = len(pred_classes) - benign_count
+    if batch_idx < args.max_batch_details:
+        print(f"\n📊 Batch {batch_idx+1}/{num_batches} ({len(X_batch)} sequences) | benign={benign_count} | non-benign={anomaly_count}")
 
-        record = {
-            'batch_number': batch_idx + 1,
-            'sequence_index': seq_idx,
-            'packet_num': pkt_idx,
-            'predicted_label': pred_label,
-            'confidence': float(conf),
-            'is_benign': is_benign,
-            'system_ip': system_ip,
-            'src_ip': src_ip,
-            'dst_ip': dst_ip,
-        }
-        batch_records.append(record)
-        prediction_records.append(record)
-        
-        if not is_benign:
-            anomalies.append({
-                'packet_num': pkt_idx,
-                'prediction': pred_label,
-                'confidence': conf,
-                'src_ip': src_ip,
-                'dst_ip': dst_ip,
-                'info': df.iloc[min(pkt_idx-1, len(df)-1)]['info'] if 'info' in df.columns else '',
-                'flags_pattern': [str(df.iloc[min(pkt_idx-1, len(df)-1)]['flags'])] if 'flags' in df.columns else [],
-                'packet_rate': float(len(X_seq) / max(1, (feature_df['timestamp'].max() - feature_df['timestamp'].min()))),
-                'protocol': str(df.iloc[min(pkt_idx-1, len(df)-1)]['protocol']) if 'protocol' in df.columns else 'TCP',
-                'connection_count': len(df),
-                'batch_summary': f"Anomaly in batch {batch_idx+1}",
-                'avg_packet_size': float(feature_df['avg_packet_size'].mean()) if 'avg_packet_size' in feature_df.columns else 0.0,
-            })
-
-    hub_ip = _detect_hub_ip(batch_df, args.hub_ip)
-    _print_batch_connectivity(batch_idx + 1, batch_df, hub_ip)
-    _print_batch_non_benign_report(batch_idx + 1, batch_records)
+        for i, (pred_class, prob) in enumerate(zip(pred_classes, probs)):
+            pred_label = str(pred_class)
+            conf = np.max(prob)
+            seq_idx = start_idx + i
+            pkt_idx = seq_idx + seq_length
+            is_benign = pred_label.lower() == "benign" or pred_label == "1"
+            if args.verbose_sequences:
+                emoji = "🟢" if is_benign else "🔴"
+                print(f"   {emoji} Seq {seq_idx:3d} (Pkt {pkt_idx:3d}): {pred_label:12s} ({conf:5.1%})")
+            
+            if not is_benign:
+                src_ip = df.iloc[min(pkt_idx-1, len(df)-1)]['src_ip'] if 'src_ip' in df.columns else 'N/A'
+                dst_ip = df.iloc[min(pkt_idx-1, len(df)-1)]['dst_ip'] if 'dst_ip' in df.columns else 'N/A'
+                anomalies.append({
+                    'packet_num': pkt_idx,
+                    'prediction': pred_label,
+                    'confidence': conf,
+                    'src_ip': src_ip,
+                    'dst_ip': dst_ip,
+                    'info': df.iloc[min(pkt_idx-1, len(df)-1)]['info'] if 'info' in df.columns else '',
+                    'flags_pattern': [str(df.iloc[min(pkt_idx-1, len(df)-1)]['flags'])] if 'flags' in df.columns else [],
+                    'packet_rate': float(len(X_seq) / max(1, (feature_df['timestamp'].max() - feature_df['timestamp'].min()))),
+                    'protocol': str(df.iloc[min(pkt_idx-1, len(df)-1)]['protocol']) if 'protocol' in df.columns else 'TCP',
+                    'connection_count': len(df),
+                    'batch_summary': f"Anomaly in batch {batch_idx+1}",
+                    'avg_packet_size': float(feature_df['avg_packet_size'].mean()) if 'avg_packet_size' in feature_df.columns else 0.0,
+                })
+    elif batch_idx == args.max_batch_details:
+        remaining_batches = num_batches - args.max_batch_details
+        print(f"\n📊 Batch details suppressed after first {args.max_batch_details} batches ({remaining_batches} more batch(es) processed silently).")
 
 # ============================================================================
 # SUMMARY
@@ -480,26 +462,16 @@ print("\n" + "─"*80)
 print("STEP 6️⃣  DETECTION SUMMARY")
 print("─"*80 + "\n")
 
-if len(all_predictions) == 0:
-    pred_classes = np.array([])
-else:
-    pred_classes = label_encoder.inverse_transform(np.array(all_predictions))
-
+pred_classes = label_encoder.inverse_transform(np.array(all_predictions))
 print("📊 Distribution:")
-if len(pred_classes) == 0:
-    print("   No predictions available.")
-    benign = 0
-    malicious = 0
-else:
-    unique, counts = np.unique(pred_classes, return_counts=True)
-    for cls, count in zip(unique, counts):
-        pct = 100 * count / len(pred_classes)
-        print(f"   {str(cls):12s}: {count:4d} ({pct:5.1f}%)")
+unique, counts = np.unique(pred_classes, return_counts=True)
+for cls, count in zip(unique, counts):
+    pct = 100 * count / len(pred_classes)
+    print(f"   {str(cls):12s}: {count:4d} ({pct:5.1f}%)")
 
-    pred_classes_str = np.array([str(x) for x in pred_classes])
-    benign = np.sum(pred_classes_str == 'benign')
-    malicious = len(pred_classes) - benign
-
+pred_classes_str = np.array([str(x) for x in pred_classes])
+benign = np.sum((pred_classes_str == 'benign') | (pred_classes_str == '1'))
+malicious = len(pred_classes) - benign
 print(f"\n📈 Total: {len(pred_classes)} | Benign: {benign} | Malicious: {malicious}\n")
 
 # ============================================================================
@@ -538,8 +510,6 @@ if len(anomalies) > 0:
         print(f"   ... and {len(anomalies)-3} more anomalies detected\n")
 else:
     print("\n✅ NO ANOMALIES DETECTED - NETWORK SECURE\n")
-
-_print_final_summary(prediction_records)
 
 print("="*80)
 print("✅ DETECTION & ANALYSIS COMPLETE")
