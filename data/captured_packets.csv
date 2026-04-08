@@ -1,4 +1,4 @@
-timestamp,src_ip,dst_ip,protocol,packet_size,src_port,dst_port,flags,Info
+timestamp,src_ip,dst_ip,protocol,packet_size,src_port,dst_port,flags
 1.001,192.168.1.5,142.250.183.14,TCP,74,52345,443,S,Normal SYN
 1.002,142.250.183.14,192.168.1.5,TCP,74,443,52345,SA,Normal SYN-ACK
 1.003,192.168.1.5,142.250.183.14,TCP,66,52345,443,A,Normal ACK
@@ -12,4 +12,4 @@ timestamp,src_ip,dst_ip,protocol,packet_size,src_port,dst_port,flags,Info
 1.300,192.168.1.30,192.168.1.1,TCP,60,50000,80,S,SYN Flood
 1.301,192.168.1.31,192.168.1.1,TCP,60,50001,80,S,SYN Flood
 1.302,192.168.1.32,192.168.1.1,TCP,60,50002,80,S,SYN Flood
-1.303,192.168.1.33,192.168.1.1,TCP,60,50003,80,S,SYN Floo
+1.303,192.168.1.33,192.168.1.1,TCP,60,50003,80,S,SYN Flood
