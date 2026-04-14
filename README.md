@@ -149,6 +149,26 @@ sudo python packet_capture.py
 
 ---
 
+## 🌐 Web UI (Streamlit)
+
+Run the frontend dashboard:
+
+```bash
+cd network-anomaly-detection
+streamlit run webapp.py
+```
+
+Then open the local URL shown in terminal (usually `http://localhost:8501`).
+Use these defaults in the sidebar to match current CLI behavior:
+
+- CSV path: `data/small_dataset.csv`
+- Model path: `artifacts/lstm_gcn_model.keras`
+- Label encoder path: `artifacts/label_encoder.pkl`
+- Preprocessor path: `artifacts/preprocessor.pkl`
+- Batch size: `10`
+
+---
+
 ## 📖 Usage Example
 
 ```python
