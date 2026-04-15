@@ -1,214 +1,283 @@
-# AI-Powered Network Monitoring & Intrusion Detection System
+# Network Anomaly Detection with LSTM + Graph Features
 
-**LSTM + GCN based anomaly detection for network traffic**
+An end-to-end network intrusion detection project that supports:
 
----
+- packet capture and CSV ingestion
+- feature engineering over traffic windows
+- hybrid LSTM + graph-style model inference
+- optional LLM-based incident analysis and remediation
+- terminal and Streamlit dashboard workflows
 
-## 🎯 Project Goal
+## 1) What This Project Does
 
-Build an intelligent network monitoring system that:
-- Captures real-time network packets
-- Detects anomalies using LSTM + GCN deep learning
-- Performs root-cause analysis
-- Suggests automated remediation
-- Visualizes network security in real-time
+This repository detects suspicious network traffic from packet logs and presents:
 
----
+- class predictions (benign / attack family)
+- confidence scores
+- suspicious source -> destination flows
+- optional AI-generated root-cause and remediation guidance
 
-## 🏗️ System Architecture
+## 2) High-Level Pipeline
 
-```
-Network Traffic → Packet Capture → Dataset Generation → Preprocessing 
-    ↓
-LSTM + GCN Model → Anomaly Detection → Analysis Agent
-    ↓
-Root Cause Identification → Remediation Engine → Dashboard Visualization
-```
-
----
-
-## 📁 Project Structure
-
-```
-network-anomaly-detection/
-├── data/
-│   ├── network_traffic_dataset.csv     # Sample Wireshark packet data
-│   ├── captured_packets.csv            # Live captured packets
-│   └── processed_dataset.csv           # Preprocessed data
-├── capture/
-│   └── packet_capture.py               # Live packet capture (Scapy)
-├── dataset/
-│   ├── dataset_loader.py               # Dataset loading & validation
-│   └── dataset_builder.py              # Convert packets to ML dataset
-├── preprocessing/
-│   └── preprocessing.py                # Data cleaning & feature engineering
-├── models/
-│   └── lstm_gcn_model.py               # LSTM + GCN hybrid model (TODO)
-├── detection/
-│   └── anomaly_detector.py             # Anomaly detection logic (TODO)
-├── analysis/
-│   └── root_cause_analysis.py          # Root cause identification (TODO)
-├── remediation/
-│   └── remediation_engine.py           # Mitigation suggestions (TODO)
-├── visualization/
-│   └── dashboard.py                    # Streamlit/Dash dashboard (TODO)
-├── main.py                             # Main execution pipeline (TODO)
-├── requirements.txt
-└── README.md
+```text
+Network Traffic
+    -> Packet Capture / CSV Input
+    -> Dataset Builder (windowed features)
+    -> Preprocessing (encoding + scaling)
+    -> LSTM + graph-input model
+    -> Prediction labels + confidence
+    -> Optional CrewAI analysis
+    -> CLI output or Streamlit dashboard
 ```
 
----
+## 3) Input and Output at Each Step
 
-## 🚀 Phase 1: Completed ✅
+### Step A: Ingestion
 
-### **Dataset & Loading**
-- ✅ `network_traffic_dataset.csv` - 100 sample Wireshark packets
-- ✅ `dataset_loader.py` - Loads, validates, cleans dataset
-- ✅ `packet_capture.py` - Live packet capture using Scapy
-- ✅ `dataset_builder.py` - Converts packets to ML-ready format
-- ✅ `preprocessing.py` - Feature engineering & scaling
+Input:
+- live packets from Scapy capture
+- or CSV files like `data/network_traffic_dataset.csv`, `data/captured_packets.csv`, `data/small_dataset.csv`
 
----
+Output:
+- packet-level rows with fields such as timestamp, src/dst IP, protocol, packet size, ports, flags, info
 
-## 📊 Dataset Format
+Primary files:
+- `capture/packet_capture.py`
+- `streaming_detector.py`
+- `streaming_detector_final.py`
 
-**Input Columns (from Wireshark):**
-```csv
-No,Time,Source,Destination,Protocol,Length,Info
-10001,375.057,192.168.1.100,192.168.1.1,TCP,54,"SYN"
+### Step B: Dataset Builder
+
+Input:
+- packet-level DataFrame
+
+Processing:
+- per-time-window aggregation and network statistics
+
+Output features include:
+- `packet_rate`
+- `connection_count`
+- `avg_packet_size`
+- `dominant_protocol`
+
+Primary file:
+- `dataset/dataset_builder.py`
+
+### Step C: Preprocessing
+
+Input:
+- engineered feature DataFrame
+
+Processing:
+- protocol and flags encoding
+- numeric scaling
+- inference-time safe handling of unknown categories
+
+Output:
+- model-ready numeric arrays
+
+Primary file:
+- `preprocessing/preprocessing.py`
+
+### Step D: Model Inference
+
+Input:
+- sequence tensor for LSTM branch
+- graph-style tensor from src/dst hash + traffic activity
+- saved model and label encoder artifacts
+
+Output:
+- predicted class per sequence/packet
+- confidence per prediction
+
+Primary files:
+- `models/lstm_gcn_model.py`
+- `streaming_detector.py`
+- `streaming_detector_final.py`
+- `webapp.py`
+
+### Step E: Optional Agentic Analysis
+
+Input:
+- detected non-benign events (attack type, protocol, flags, packet rate, summary)
+
+Output:
+- anomaly analysis: type, cause, confidence, evidence
+- remediation: actions, priority, notes
+
+Primary file:
+- `agents.py`
+
+## 4) Repository Layout
+
+```text
+mp2/
+    agents.py
+    create_small_dataset.py
+    streaming_detector.py
+    streaming_detector_final.py
+    webapp.py
+    requirements.txt
+    README.md
+    artifacts/
+        lstm_gcn_model.keras
+        label_encoder.pkl
+        preprocessor.pkl
+        protocol_encoder.pkl
+        scaler.pkl
+        tfidf_vectorizer.pkl
+    capture/
+        packet_capture.py
+    data/
+        network_traffic_dataset.csv
+        captured_packets.csv
+        small_dataset.csv
+    dataset/
+        dataset_builder.py
+        dataset_loader.py
+    models/
+        lstm_gcn_model.py
+    preprocessing/
+        preprocessing.py
 ```
 
-**Processed Features (for ML):**
-```
-- packet_size
-- packet_rate
-- connection_count
-- avg_packet_size
-- protocol_encoded
-- label (normal/attack)
-```
+## 5) Environment Setup
 
----
-
-## 🔧 Installation
+### Recommended
 
 ```bash
-cd network-anomaly-detection
+python -m venv .venv
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
----
+### Python Version
 
-## 🧪 Testing Phase 1
+- Python 3.9+ is recommended by the codebase dependencies.
 
-### Test Dataset Loader
-```bash
-cd dataset
-python dataset_loader.py
-```
+## 6) Required Artifacts
 
-### Test Dataset Builder
-```bash
-cd dataset
-python dataset_builder.py
-```
+For detection/inference you need:
 
-### Test Preprocessing
-```bash
-cd preprocessing
-python preprocessing.py
-```
+- `artifacts/lstm_gcn_model.keras`
+- `artifacts/label_encoder.pkl`
+- `artifacts/preprocessor.pkl`
 
-### Capture Live Packets (requires root)
-```bash
-cd capture
-sudo python packet_capture.py
-```
+These are already present in this repository.
 
----
+## 7) Run Modes
 
-## 🎯 Next Steps (Phase 2)
-
-- [ ] Implement LSTM + GCN hybrid model
-- [ ] Build anomaly detector with confidence scoring
-- [ ] Create analysis agent for root cause identification
-- [ ] Develop remediation engine
-- [ ] Build real-time visualization dashboard
-- [ ] Integrate full pipeline in main.py
-
----
-
-## 🛠️ Tech Stack
-
-- **Language:** Python 3.9+
-- **ML/DL:** TensorFlow/PyTorch, scikit-learn
-- **Networking:** Scapy, PyShark
-- **Graph:** NetworkX
-- **Visualization:** Plotly, Dash, Streamlit
-- **Data:** Pandas, NumPy
-
----
-
-## 🌐 Web UI (Streamlit)
-
-Run the frontend dashboard:
+### A) Streamlit Dashboard (recommended for demos)
 
 ```bash
-cd network-anomaly-detection
-streamlit run webapp.py
+streamlit run webapp.py --server.port 8501
 ```
 
-Then open the local URL shown in terminal (usually `http://localhost:8501`).
-Use these defaults in the sidebar to match current CLI behavior:
+Open in browser:
+- `http://localhost:8501`
 
-- CSV path: `data/small_dataset.csv`
-- Model path: `artifacts/lstm_gcn_model.keras`
-- Label encoder path: `artifacts/label_encoder.pkl`
-- Preprocessor path: `artifacts/preprocessor.pkl`
-- Batch size: `10`
+UI structure:
+- Detection tab: upload/select CSV, run detection, metrics/charts/feed/threat table
+- Analysis & Remediation tab: run CrewAI analysis on detected threats
 
----
+### B) Terminal detector (full pipeline)
 
-## 📖 Usage Example
-
-```python
-from dataset.dataset_loader import load_network_traffic
-from preprocessing.preprocessing import NetworkDataPreprocessor
-
-# Load dataset
-df = load_network_traffic('../data/network_traffic_dataset.csv')
-
-# Preprocess
-preprocessor = NetworkDataPreprocessor()
-X, y = preprocessor.preprocess_data(df)
-
-# Train model (coming in Phase 2)
-# model.fit(X, y)
+```bash
+python -u streaming_detector_final.py \
+    --csv-path data/small_dataset.csv \
+    --model-path artifacts/lstm_gcn_model.keras \
+    --label-encoder-path artifacts/label_encoder.pkl \
+    --preprocessor-path artifacts/preprocessor.pkl \
+    --batch-size 10 \
+    --llm-model gemini/gemini-1.5-flash \
+    --max-batch-details 3
 ```
 
----
+### C) Streaming CSV monitor loop
 
-## 🔬 Research Concept
+```bash
+python streaming_detector.py \
+    --csv-path data/captured_packets.csv \
+    --model-path artifacts/lstm_gcn_model.keras \
+    --label-encoder-path artifacts/label_encoder.pkl \
+    --preprocessor-path artifacts/preprocessor.pkl \
+    --batch-size 50 \
+    --poll-seconds 2.0
+```
 
-**LSTM** learns temporal patterns in packet sequences  
-**GCN** analyzes communication graph (IP nodes, traffic edges)  
-**Hybrid approach** combines time-series + graph features for superior anomaly detection
+## 8) Training / Re-Training
 
----
+To train and save artifacts again:
 
-## ⚠️ Requirements
+```bash
+python models/lstm_gcn_model.py \
+    --csv-path data/network_traffic_dataset.csv \
+    --output-dir artifacts \
+    --epochs 8 \
+    --batch-size 32
+```
 
-- Python 3.9+
-- Root/sudo access for live packet capture
-- Network interface for monitoring
-- Sufficient RAM for ML model training
+Expected outputs in `artifacts/`:
+- model file (`.keras` or fallback `.pkl`)
+- preprocessing artifacts
+- label encoder
 
----
+## 9) Agent (LLM) Configuration
 
-## 📝 License
+Set API key in `.env` (project root), based on provider:
 
-Educational/Research Project
+- `GEMINI_API_KEY` or `GOOGLE_API_KEY` for Gemini models
+- `OPENAI_API_KEY` for OpenAI models
+- `GROQ_API_KEY` for Groq models
 
----
+If keys are missing, agent calls return safe fallback responses.
 
-**Status:** Phase 1 Complete - Dataset & Preprocessing Ready ✅
+## 10) CSV Schema Compatibility
+
+Supported column aliases in current code include:
+
+- timestamp: `timestamp` or `Time`
+- source IP: `src_ip` or `Source`
+- destination IP: `dst_ip` or `Destination`
+- protocol: `protocol` or `Protocol`
+- packet size: `packet_size` or `Length`
+
+Optional columns:
+- `src_port`, `dst_port`, `flags`, `Info`/`info`, `label`
+
+## 11) Troubleshooting
+
+### Streamlit starts but dashboard looks empty
+
+- In Detection tab, click `Run Detection` after selecting/uploading CSV.
+
+### Model file not found
+
+- Verify sidebar paths in dashboard or CLI arguments.
+- Confirm files exist under `artifacts/`.
+
+### Agent analysis does not run
+
+- Ensure dependencies are installed from `requirements.txt`.
+- Ensure provider API key is set in `.env`.
+
+### Capture issues on Windows
+
+- Packet capture may require admin privileges and correct network interface.
+- Capture module is Scapy-based, not direct Wireshark runtime integration.
+
+## 12) Current Status
+
+Implemented and usable now:
+
+- dataset loading and building
+- preprocessing artifacts
+- model training/inference scripts
+- terminal detector flow
+- Streamlit tabbed dashboard
+- optional CrewAI analysis/remediation
+
+## 13) License
+
+Educational / research usage.

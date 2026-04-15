@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import pickle
 import tempfile
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -195,24 +196,85 @@ def _inject_theme() -> None:
     st.markdown(
         """
         <style>
-            .stApp { background-color: #0b1220; color: #e5e7eb; }
-            [data-testid="stAppViewContainer"] { background-color: #0b1220; }
-            [data-testid="stHeader"] { background: #0b1220; }
-            [data-testid="stSidebar"] { background-color: #111827; }
-            [data-testid="stSidebar"] * { color: #e5e7eb; }
+            :root {
+                --bg-0: #09121f;
+                --bg-1: #0f1d2f;
+                --bg-2: #11263a;
+                --panel: rgba(12, 24, 39, 0.84);
+                --panel-soft: rgba(17, 34, 54, 0.72);
+                --text: #e5edf6;
+                --muted: #9ab0c7;
+                --accent: #00c2a8;
+                --accent-warm: #f59e0b;
+                --danger: #ef4444;
+                --ok: #22c55e;
+                --border: rgba(154, 176, 199, 0.2);
+            }
+            .stApp {
+                color: var(--text);
+                background:
+                    radial-gradient(1200px 540px at 8% -12%, rgba(0, 194, 168, 0.22), transparent 62%),
+                    radial-gradient(900px 500px at 90% 0%, rgba(245, 158, 11, 0.19), transparent 64%),
+                    linear-gradient(160deg, var(--bg-0), var(--bg-1) 45%, var(--bg-2));
+            }
+            [data-testid="stAppViewContainer"] { background: transparent; }
+            [data-testid="stHeader"] { background: transparent; }
+            [data-testid="stSidebar"] {
+                background: linear-gradient(180deg, #0d1b2b 0%, #102239 100%);
+                border-right: 1px solid var(--border);
+            }
+            [data-testid="stSidebar"] * { color: var(--text); }
             [data-testid="stMarkdownContainer"] p,
             [data-testid="stMarkdownContainer"] li,
             [data-testid="stMarkdownContainer"] span,
             [data-testid="stText"] {
-                color: #e5e7eb;
+                color: var(--text);
             }
             .dark-card {
-                background: #111827;
-                color: #f9fafb;
-                border-radius: 12px;
+                background: var(--panel);
+                backdrop-filter: blur(6px);
+                border-radius: 14px;
                 padding: 14px 16px;
                 margin: 8px 0;
-                border: 1px solid #1f2937;
+                border: 1px solid var(--border);
+                box-shadow: 0 8px 30px rgba(0, 0, 0, 0.22);
+            }
+            .hero {
+                position: relative;
+                padding: 20px 22px;
+                border-radius: 16px;
+                margin: 4px 0 14px 0;
+                overflow: hidden;
+                background: linear-gradient(130deg, rgba(0, 194, 168, 0.18), rgba(245, 158, 11, 0.18));
+                border: 1px solid rgba(154, 176, 199, 0.26);
+            }
+            .hero h2 {
+                margin: 0;
+                font-size: 1.65rem;
+                letter-spacing: 0.3px;
+                color: #f2f8ff;
+            }
+            .hero p {
+                margin: 8px 0 0 0;
+                color: #d6e3f1;
+            }
+            .stage-card {
+                background: var(--panel-soft);
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                padding: 12px 14px;
+                margin-bottom: 10px;
+            }
+            .stage-title {
+                font-weight: 700;
+                color: #f8fcff;
+                letter-spacing: 0.2px;
+                margin-bottom: 3px;
+            }
+            .stage-note {
+                font-size: 0.92rem;
+                color: var(--muted);
+                margin: 0;
             }
             .metric-chip {
                 display: inline-block;
@@ -222,41 +284,63 @@ def _inject_theme() -> None:
                 margin-right: 6px;
                 font-weight: 600;
             }
-            .chip-green { background: #14532d; color: #dcfce7; }
-            .chip-red { background: #7f1d1d; color: #fee2e2; }
-            .chip-gray { background: #374151; color: #e5e7eb; }
+            .chip-green { background: rgba(34, 197, 94, 0.2); color: #c0ffd8; border: 1px solid rgba(34,197,94,0.35); }
+            .chip-red { background: rgba(239, 68, 68, 0.2); color: #ffd4d4; border: 1px solid rgba(239,68,68,0.35); }
+            .chip-gray { background: rgba(148, 163, 184, 0.2); color: #d7e2ee; border: 1px solid rgba(148,163,184,0.3); }
+            .chip-amber { background: rgba(245, 158, 11, 0.2); color: #ffe5bd; border: 1px solid rgba(245,158,11,0.35); }
             .threat-highlight {
-                border: 1px solid #ef4444;
-                box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.35) inset;
+                border: 1px solid rgba(239, 68, 68, 0.72);
+                box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.3) inset;
             }
             .log-box {
-                background: #0b1220;
-                color: #d1d5db;
+                background: rgba(8, 16, 30, 0.9);
+                color: #c9d6e5;
                 padding: 10px;
                 border-radius: 10px;
-                height: 220px;
+                height: 250px;
                 overflow-y: auto;
-                font-family: Consolas, monospace;
+                font-family: "Cascadia Code", "Consolas", monospace;
                 font-size: 0.85rem;
-                border: 1px solid #1f2937;
+                border: 1px solid var(--border);
+                line-height: 1.45;
             }
             .section-title {
-                color: #f9fafb;
+                color: #f9fcff;
                 font-weight: 700;
                 margin-top: 6px;
             }
+            .mini-caption {
+                color: var(--muted);
+                font-size: 0.88rem;
+                margin-top: -4px;
+            }
+            .agent-card {
+                background: linear-gradient(175deg, rgba(12, 25, 40, 0.92), rgba(15, 32, 48, 0.82));
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                padding: 14px 14px 10px 14px;
+                margin-bottom: 10px;
+            }
+            .agent-card h4 {
+                margin: 0 0 4px 0;
+                color: #f8fcff;
+                letter-spacing: 0.2px;
+            }
+            .agent-card p {
+                margin: 6px 0;
+            }
             div[data-testid="stMetric"] {
-                background: #111827;
-                border: 1px solid #1f2937;
+                background: rgba(9, 20, 33, 0.86);
+                border: 1px solid var(--border);
                 border-radius: 10px;
                 padding: 10px 12px;
             }
             div[data-testid="stMetric"] label,
             div[data-testid="stMetric"] div {
-                color: #f3f4f6;
+                color: #e9f2fb;
             }
             .stDataFrame, .stTable {
-                background: #111827;
+                background: rgba(9, 20, 33, 0.86);
                 border-radius: 10px;
             }
         </style>
@@ -283,20 +367,42 @@ def _render_analysis_card(item: Dict[str, Any]) -> None:
     evidence_html = "".join(f"<li>{html.escape(str(e))}</li>" for e in evidence) or "<li>No evidence provided</li>"
     actions_html = "".join(f"<li>{html.escape(str(a))}</li>" for a in actions) or "<li>No action provided</li>"
 
+    flow = f"{html.escape(str(item.get('src_ip', 'N/A')))} -> {html.escape(str(item.get('dst_ip', 'N/A')))}"
     st.markdown(
         f"""
-        <div class="dark-card">
+        <div class="agent-card">
+            <h4>{html.escape(str(item.get('prediction', 'unknown')).upper())}</h4>
             <div>
-                <span class="metric-chip chip-red">🚨 {html.escape(str(item.get('prediction', 'unknown')).upper())}</span>
+                <span class="metric-chip chip-red">Threat</span>
                 <span class="metric-chip {priority_class}">Priority: {html.escape(priority.upper())}</span>
+                <span class="metric-chip chip-amber">Confidence: {html.escape(str(analyzer.get('confidence', 'low')).upper())}</span>
             </div>
-            <p><b>From:</b> {html.escape(str(item.get('src_ip', 'N/A')))} &nbsp;&nbsp; <b>To:</b> {html.escape(str(item.get('dst_ip', 'N/A')))}</p>
-            <p><b>Cause:</b> {html.escape(str(analyzer.get('cause', 'Unknown')))}</p>
-            <p><b>Confidence:</b> {html.escape(str(analyzer.get('confidence', 'low')).upper())}</p>
+            <p><b>Flow:</b> {flow}</p>
+            <p><b>Root Cause:</b> {html.escape(str(analyzer.get('cause', 'Unknown')))}</p>
             <p><b>Evidence:</b></p>
             <ul>{evidence_html}</ul>
-            <p><b>Recommended Actions:</b></p>
+            <p><b>Remediation:</b></p>
             <ul>{actions_html}</ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _format_log_box(lines: List[str]) -> str:
+    return (
+        f'<div class="log-box">{"<br>".join(html.escape(line) for line in lines) if lines else "No events yet."}</div>'
+    )
+
+
+def _render_pipeline_hero() -> None:
+    st.markdown(
+        """
+        <div class="hero">
+            <h2>Hybrid Intrusion Detection + Agentic Response Console</h2>
+            <p>
+                Stage 1 runs LSTM + GCN inference only. Stage 2 is optional and consumes API tokens only for selected anomalies.
+            </p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -325,6 +431,7 @@ def run_detection(
 
     all_pred_indices: List[int] = []
     prediction_rows: List[Dict[str, Any]] = []
+    batch_logs: List[str] = []
 
     num_batches = (len(x_seq) + batch_size - 1) // batch_size
     progress = st.progress(0, text="Running prediction batches...")
@@ -336,6 +443,13 @@ def run_detection(
         probs = model.predict([x_seq[start_idx:end_idx], g_seq[start_idx:end_idx]], verbose=0)
         pred_idx = np.argmax(probs, axis=1)
         pred_labels = label_encoder.inverse_transform(pred_idx)
+        non_benign_in_batch = int(np.sum([0 if _is_benign(x) else 1 for x in pred_labels]))
+        batch_top = Counter([str(x) for x in pred_labels]).most_common(2)
+        top_text = ", ".join([f"{label}:{count}" for label, count in batch_top]) if batch_top else "n/a"
+        batch_logs.append(
+            f"Batch {batch_idx + 1}/{num_batches} | Sequences: {end_idx - start_idx} | "
+            f"Suspicious: {non_benign_in_batch} | Top: {top_text}"
+        )
 
         all_pred_indices.extend(pred_idx.tolist())
 
@@ -416,6 +530,7 @@ def run_detection(
         "non_benign_count": len(non_benign_rows),
         "avg_confidence": avg_confidence,
         "prediction_rows": prediction_rows,
+        "batch_logs": batch_logs,
         "distribution": distribution,
         "non_benign_table": pd.DataFrame(non_benign_rows),
         "agent_table": pd.DataFrame(agent_outputs),
@@ -425,8 +540,7 @@ def run_detection(
 def main() -> None:
     st.set_page_config(page_title="Network IDS Dashboard", page_icon="N", layout="wide")
     _inject_theme()
-    st.title("Network IDS Dashboard")
-    st.caption("✅ Detection and 🚨 Analysis separated for clear academic presentation.")
+    _render_pipeline_hero()
 
     if "detection_result" not in st.session_state:
         st.session_state["detection_result"] = None
@@ -435,193 +549,227 @@ def main() -> None:
     if "detected_threats" not in st.session_state:
         st.session_state["detected_threats"] = []
 
-    tab_detection, tab_analysis = st.tabs(["Detection", "Analysis & Remediation"])
+    st.markdown(
+        """
+        <div class="stage-card">
+            <div class="stage-title">Stage 1: Deep Learning Detection (No API Token Usage)</div>
+            <p class="stage-note">Run only LSTM + GCN to show core detection pipeline and suspicious flows.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    with tab_detection:
-        st.markdown('<div class="section-title">📊 Detection Controls</div>', unsafe_allow_html=True)
-        uploaded_csv = st.file_uploader("Upload CSV packet data", type=["csv"], key="detection_csv_uploader")
+    uploaded_csv = st.file_uploader("Upload CSV packet data", type=["csv"], key="detection_csv_uploader")
 
-        c1, c2 = st.columns(2)
-        with c1:
-            csv_path_text = st.text_input("Or CSV path", value="data/small_dataset.csv")
-            model_path_text = st.text_input("Model path", value="artifacts/lstm_gcn_model.keras")
-        with c2:
-            label_encoder_path_text = st.text_input("Label encoder path", value="artifacts/label_encoder.pkl")
-            preprocessor_path_text = st.text_input("Preprocessor path", value="artifacts/preprocessor.pkl")
+    c1, c2 = st.columns(2)
+    with c1:
+        csv_path_text = st.text_input("Or CSV path", value="data/small_dataset.csv")
+        model_path_text = st.text_input("Model path", value="artifacts/lstm_gcn_model.keras")
+    with c2:
+        label_encoder_path_text = st.text_input("Label encoder path", value="artifacts/label_encoder.pkl")
+        preprocessor_path_text = st.text_input("Preprocessor path", value="artifacts/preprocessor.pkl")
 
-        batch_size = st.number_input("Batch size", min_value=1, max_value=5000, value=10, step=1)
-        run_btn = st.button("Run Detection", type="primary", use_container_width=True, key="run_detection_btn")
+    batch_size = st.number_input("Batch size", min_value=1, max_value=5000, value=10, step=1)
+    run_btn = st.button("Run Stage 1: Detection", type="primary", use_container_width=True, key="run_detection_btn")
 
-        if run_btn:
-            csv_path = _save_uploaded_csv(uploaded_csv) if uploaded_csv is not None else _to_abs_path(csv_path_text)
-            model_path = _to_abs_path(model_path_text)
-            label_encoder_path = _to_abs_path(label_encoder_path_text)
-            preprocessor_path = _to_abs_path(preprocessor_path_text)
+    if run_btn:
+        csv_path = _save_uploaded_csv(uploaded_csv) if uploaded_csv is not None else _to_abs_path(csv_path_text)
+        model_path = _to_abs_path(model_path_text)
+        label_encoder_path = _to_abs_path(label_encoder_path_text)
+        preprocessor_path = _to_abs_path(preprocessor_path_text)
 
-            missing = [
-                str(path)
-                for path in [csv_path, model_path, label_encoder_path, preprocessor_path]
-                if not path.exists()
-            ]
+        missing = [
+            str(path)
+            for path in [csv_path, model_path, label_encoder_path, preprocessor_path]
+            if not path.exists()
+        ]
 
-            if missing:
-                st.error("Missing required file(s):")
-                for item in missing:
-                    st.write(f"- {item}")
-            else:
-                with st.spinner("Running model inference..."):
-                    try:
-                        result = run_detection(
-                            csv_path=csv_path,
-                            model_path=model_path,
-                            label_encoder_path=label_encoder_path,
-                            preprocessor_path=preprocessor_path,
-                            batch_size=int(batch_size),
-                            run_agent_analysis=False,
-                            llm_model="gemini/gemini-1.5-flash",
-                            max_agent_items=3,
-                        )
-                        st.session_state["detection_result"] = result
-                        st.session_state["detected_threats"] = result.get("non_benign_table", pd.DataFrame()).to_dict(orient="records")
-                        st.session_state["analysis_result"] = None
-                        st.success("✅ Detection completed. Open the Analysis tab to run remediation.")
-                    except Exception as exc:
-                        st.exception(exc)
-
-        result = st.session_state.get("detection_result")
-        if not result:
-            st.info("Upload a CSV and click Run Detection.")
+        if missing:
+            st.error("Missing required file(s):")
+            for item in missing:
+                st.write(f"- {item}")
         else:
-            benign_count = int(result.get("benign_count", 0))
-            non_benign_count = int(result.get("non_benign_count", 0))
-            total_seq = int(result.get("total_sequences", 0))
-            avg_conf = float(result.get("avg_confidence", 0.0))
+            with st.spinner("Running LSTM + GCN inference..."):
+                try:
+                    result = run_detection(
+                        csv_path=csv_path,
+                        model_path=model_path,
+                        label_encoder_path=label_encoder_path,
+                        preprocessor_path=preprocessor_path,
+                        batch_size=int(batch_size),
+                        run_agent_analysis=False,
+                        llm_model="gemini/gemini-1.5-flash",
+                        max_agent_items=3,
+                    )
+                    st.session_state["detection_result"] = result
+                    st.session_state["detected_threats"] = result.get("non_benign_table", pd.DataFrame()).to_dict(orient="records")
+                    st.session_state["analysis_result"] = None
+                    st.success("Stage 1 complete. Stage 2 can now analyze suspicious traffic.")
+                except Exception as exc:
+                    st.exception(exc)
 
-            benign_pct = (100.0 * benign_count / total_seq) if total_seq else 0.0
-            malicious_pct = (100.0 * non_benign_count / total_seq) if total_seq else 0.0
+    result = st.session_state.get("detection_result")
+    if not result:
+        st.info("Run Stage 1 first. This will produce predictions without using LLM tokens.")
+    else:
+        benign_count = int(result.get("benign_count", 0))
+        non_benign_count = int(result.get("non_benign_count", 0))
+        total_seq = int(result.get("total_sequences", 0))
+        avg_conf = float(result.get("avg_confidence", 0.0))
 
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Total packets", result.get("total_packets", total_seq))
-            m2.metric("✅ Benign", f"{benign_count} ({benign_pct:.1f}%)")
-            m3.metric("🚨 Malicious", f"{non_benign_count} ({malicious_pct:.1f}%)")
-            m4.metric("Average confidence", f"{avg_conf:.2%}")
+        benign_pct = (100.0 * benign_count / total_seq) if total_seq else 0.0
+        malicious_pct = (100.0 * non_benign_count / total_seq) if total_seq else 0.0
 
-            st.markdown('<div class="section-title">📊 Attack Distribution</div>', unsafe_allow_html=True)
-            st.dataframe(result["distribution"], use_container_width=True)
-            if not result["distribution"].empty:
-                st.bar_chart(result["distribution"].set_index("class"))
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total packets", result.get("total_packets", total_seq))
+        m2.metric("Benign", f"{benign_count} ({benign_pct:.1f}%)")
+        m3.metric("Suspicious", f"{non_benign_count} ({malicious_pct:.1f}%)")
+        m4.metric("Average confidence", f"{avg_conf:.2%}")
 
-            st.markdown('<div class="section-title">⚠️ Suspicious Traffic Table</div>', unsafe_allow_html=True)
-            non_benign_table = result["non_benign_table"].copy()
-            if non_benign_table.empty:
-                st.markdown('<div class="dark-card"><span class="metric-chip chip-green">✅ No suspicious traffic detected</span></div>', unsafe_allow_html=True)
-            else:
-                non_benign_table["flow"] = non_benign_table["src_ip"].astype(str) + " → " + non_benign_table["dst_ip"].astype(str)
-                display_df = non_benign_table[["flow", "predicted_label", "confidence", "packet_rate"]].rename(
-                    columns={
-                        "flow": "Source → Destination",
-                        "predicted_label": "Predicted Attack Type",
-                        "confidence": "Confidence",
-                        "packet_rate": "Packet Rate",
-                    }
-                )
-                st.dataframe(display_df, use_container_width=True)
+        st.markdown('<div class="section-title">Detection Execution Log</div><div class="mini-caption">Stage-wise progress similar to terminal output</div>', unsafe_allow_html=True)
+        detection_lines = result.get("batch_logs", [])[-40:]
+        st.markdown(_format_log_box(detection_lines), unsafe_allow_html=True)
 
-            st.markdown('<div class="section-title">🧾 Live Detection Feed (Simulated)</div>', unsafe_allow_html=True)
-            feed_rows = result.get("prediction_rows", [])[-30:]
-            feed_lines = []
-            for row in feed_rows:
-                icon = "✅" if row.get("is_benign") else "⚠️"
-                label = "NORMAL" if row.get("is_benign") else str(row.get("predicted_label", "ATTACK")).upper()
-                feed_lines.append(
-                    f"[{row.get('timestamp', datetime.now().strftime('%H:%M:%S'))}] "
-                    f"{row.get('src_ip', 'N/A')} → {row.get('dst_ip', 'N/A')} "
-                    f"{icon} {label} ({float(row.get('confidence', 0.0)):.1%})"
-                )
-            st.markdown(
-                f'<div class="log-box">{"<br>".join(html.escape(line) for line in feed_lines) if feed_lines else "No events yet."}</div>',
-                unsafe_allow_html=True,
+        st.markdown('<div class="section-title">Attack Distribution</div>', unsafe_allow_html=True)
+        st.dataframe(result["distribution"], use_container_width=True)
+        if not result["distribution"].empty:
+            st.bar_chart(result["distribution"].set_index("class"))
+
+        st.markdown('<div class="section-title">Suspicious Traffic Table</div>', unsafe_allow_html=True)
+        non_benign_table = result["non_benign_table"].copy()
+        if non_benign_table.empty:
+            st.markdown('<div class="dark-card"><span class="metric-chip chip-green">No suspicious traffic detected</span></div>', unsafe_allow_html=True)
+        else:
+            non_benign_table["flow"] = non_benign_table["src_ip"].astype(str) + " -> " + non_benign_table["dst_ip"].astype(str)
+            display_df = non_benign_table[["flow", "predicted_label", "confidence", "packet_rate"]].rename(
+                columns={
+                    "flow": "Source -> Destination",
+                    "predicted_label": "Predicted Attack Type",
+                    "confidence": "Confidence",
+                    "packet_rate": "Packet Rate",
+                }
             )
+            st.dataframe(display_df, use_container_width=True)
 
-            st.markdown('<div class="section-title">🚨 Top Threat</div>', unsafe_allow_html=True)
-            if non_benign_table.empty:
-                st.markdown('<div class="dark-card"><span class="metric-chip chip-green">✅ No active threat</span></div>', unsafe_allow_html=True)
-            else:
-                top = non_benign_table.sort_values("confidence", ascending=False).iloc[0]
-                st.markdown(
-                    f"""
-                    <div class="dark-card threat-highlight">
-                        <span class="metric-chip chip-red">Top Threat</span>
-                        <p><b>Flow:</b> {html.escape(str(top['src_ip']))} → {html.escape(str(top['dst_ip']))}</p>
-                        <p><b>Attack:</b> {html.escape(str(top['predicted_label']))}</p>
-                        <p><b>Confidence:</b> {float(top['confidence']):.2%}</p>
-                        <p><b>Packet Rate:</b> {float(top.get('packet_rate', 0.0)):.2f}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-            st.markdown('<div class="section-title">📘 Explainability</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Top Threat Snapshot</div>', unsafe_allow_html=True)
+        if non_benign_table.empty:
+            st.markdown('<div class="dark-card"><span class="metric-chip chip-green">No active threat</span></div>', unsafe_allow_html=True)
+        else:
+            top = non_benign_table.sort_values("confidence", ascending=False).iloc[0]
             st.markdown(
-                """
-                <div class="dark-card">
-                    <p><b>LSTM:</b> captures temporal behavior, such as bursty packet patterns over time.</p>
-                    <p><b>GCN-style branch:</b> captures network relationships between communicating IP nodes.</p>
-                    <p>Together, they detect attacks using both time dynamics and communication structure.</p>
+                f"""
+                <div class="dark-card threat-highlight">
+                    <span class="metric-chip chip-red">Top Threat</span>
+                    <p><b>Flow:</b> {html.escape(str(top['src_ip']))} -> {html.escape(str(top['dst_ip']))}</p>
+                    <p><b>Attack:</b> {html.escape(str(top['predicted_label']))}</p>
+                    <p><b>Confidence:</b> {float(top['confidence']):.2%}</p>
+                    <p><b>Packet Rate:</b> {float(top.get('packet_rate', 0.0)):.2f}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-    with tab_analysis:
-        st.markdown('<div class="section-title">⚙️ Analysis & Remediation</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="stage-card">
+            <div class="stage-title">Stage 2: Agentic AI (Token-Aware)</div>
+            <p class="stage-note">Run analyzer and remediation only after reviewing Stage 1 detections.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    llm_col1, llm_col2 = st.columns([2, 1])
+    with llm_col1:
         llm_model = st.text_input("LLM model", value="gemini/gemini-1.5-flash", key="analysis_llm_model")
+    with llm_col2:
         max_agent_items = st.number_input("Max anomaly analyses", min_value=1, max_value=50, value=5, step=1, key="analysis_max_items")
-        run_analysis_btn = st.button(
-            "Run Analysis on Detected Threats",
-            type="primary",
-            use_container_width=True,
-            key="run_analysis_btn",
+
+    run_analysis_btn = st.button(
+        "Run Stage 2: Agent Analysis and Remediation",
+        type="primary",
+        use_container_width=True,
+        key="run_analysis_btn",
+    )
+
+    threats = st.session_state.get("detected_threats", [])
+    if threats:
+        st.caption(f"{len(threats)} suspicious records available. Only first {int(max_agent_items)} will consume tokens.")
+    else:
+        st.warning("No suspicious traffic available yet. Complete Stage 1 first.")
+
+    if threats and run_analysis_btn:
+        if not AGENTS_AVAILABLE:
+            st.error("agents.py dependencies are unavailable. Install crewai and provider keys first.")
+        else:
+            analysis_results: List[Dict[str, Any]] = []
+            agent_log_lines: List[str] = []
+            log_placeholder = st.empty()
+            progress = st.progress(0, text="Running agent analysis...")
+            total_agent_tasks = min(len(threats), int(max_agent_items))
+
+            for idx, row in enumerate(threats[: int(max_agent_items)]):
+                payload = {
+                    "prediction": row.get("predicted_label", "unknown"),
+                    "packet_rate": int(row.get("packet_rate", 0)),
+                    "protocol": row.get("protocol", "UNKNOWN"),
+                    "flags_pattern": [row.get("flags", "NONE")],
+                    "connection_count": 0,
+                    "batch_summary": f"Anomaly around packet {row.get('packet_num', 'N/A')}",
+                    "avg_packet_size": 0.0,
+                }
+                agent_log_lines.append(
+                    f"[{idx + 1}/{total_agent_tasks}] Analyzing packet {row.get('packet_num', 'N/A')} | "
+                    f"{row.get('src_ip', 'N/A')} -> {row.get('dst_ip', 'N/A')} | class={row.get('predicted_label', 'unknown')}"
+                )
+                log_placeholder.markdown(_format_log_box(agent_log_lines[-20:]), unsafe_allow_html=True)
+
+                agent_result = run_agents(payload, llm_model=llm_model)
+                analyzer = agent_result.get("analyzer_output", {})
+                remediation = agent_result.get("remediation_output", {})
+                analysis_results.append(
+                    {
+                        "prediction": row.get("predicted_label", "unknown"),
+                        "src_ip": row.get("src_ip", "N/A"),
+                        "dst_ip": row.get("dst_ip", "N/A"),
+                        "analyzer_output": analyzer,
+                        "remediation_output": remediation,
+                    }
+                )
+
+                agent_log_lines.append(
+                    f"   -> cause={analyzer.get('cause', 'unknown')} | priority={remediation.get('priority', 'medium')}"
+                )
+                log_placeholder.markdown(_format_log_box(agent_log_lines[-20:]), unsafe_allow_html=True)
+                progress.progress(
+                    int(((idx + 1) / max(1, total_agent_tasks)) * 100),
+                    text=f"Processed {idx + 1}/{total_agent_tasks} agent tasks",
+                )
+
+            progress.empty()
+            st.session_state["analysis_result"] = analysis_results
+            st.success("Stage 2 complete.")
+
+    analysis_result = st.session_state.get("analysis_result")
+    if analysis_result:
+        st.markdown('<div class="section-title">Agent Findings and Recommended Actions</div>', unsafe_allow_html=True)
+
+        summary_col1, summary_col2, summary_col3 = st.columns(3)
+        high_priority = sum(
+            1
+            for item in analysis_result
+            if str(item.get("remediation_output", {}).get("priority", "medium")).lower() in {"high", "critical"}
         )
+        summary_col1.metric("Cases analyzed", len(analysis_result))
+        summary_col2.metric("High/Critical priority", high_priority)
+        summary_col3.metric("LLM model", llm_model)
 
-        threats = st.session_state.get("detected_threats", [])
-        if not threats:
-            st.warning("⚠️ No detected threats yet. Run Detection tab first.")
-        elif run_analysis_btn:
-            if not AGENTS_AVAILABLE:
-                st.error("agents.py dependencies are unavailable. Install crewai and provider keys first.")
-            else:
-                analysis_results: List[Dict[str, Any]] = []
-                with st.spinner("Running agent analysis..."):
-                    for row in threats[: int(max_agent_items)]:
-                        payload = {
-                            "prediction": row.get("predicted_label", "unknown"),
-                            "packet_rate": int(row.get("packet_rate", 0)),
-                            "protocol": row.get("protocol", "UNKNOWN"),
-                            "flags_pattern": [row.get("flags", "NONE")],
-                            "connection_count": 0,
-                            "batch_summary": f"Anomaly around packet {row.get('packet_num', 'N/A')}",
-                            "avg_packet_size": 0.0,
-                        }
-                        agent_result = run_agents(payload, llm_model=llm_model)
-                        analysis_results.append(
-                            {
-                                "prediction": row.get("predicted_label", "unknown"),
-                                "src_ip": row.get("src_ip", "N/A"),
-                                "dst_ip": row.get("dst_ip", "N/A"),
-                                "analyzer_output": agent_result.get("analyzer_output", {}),
-                                "remediation_output": agent_result.get("remediation_output", {}),
-                            }
-                        )
-                st.session_state["analysis_result"] = analysis_results
-                st.success("✅ Analysis complete.")
-
-        analysis_result = st.session_state.get("analysis_result")
-        if analysis_result:
-            for item in analysis_result:
+        left, right = st.columns(2)
+        for idx, item in enumerate(analysis_result):
+            with left if idx % 2 == 0 else right:
                 _render_analysis_card(item)
-        elif threats:
-            st.info("Detected threats are ready. Click the analysis button to generate cause and remediation cards.")
+    elif threats:
+        st.info("Stage 2 is ready. Click the button above to generate root cause and remediation.")
 
 
 if __name__ == "__main__":
