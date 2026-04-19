@@ -50,7 +50,8 @@ print("─"*80)
 print("STEP 1️⃣  LOADING MODEL & PREPROCESSORS")
 print("─"*80)
 
-model = tf.keras.models.load_model(args.model_path)
+import keras
+model = keras.models.load_model(args.model_path)
 print(f"✅ Model loaded")
 
 with open(args.label_encoder_path, 'rb') as f:
