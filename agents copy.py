@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 import time
@@ -13,8 +12,7 @@ from dotenv import load_dotenv
 
 
 # Load project .env so API keys are available when launched from IDE terminals.
-load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
-load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
 
 ALLOWED_CONFIDENCE = {"low", "medium", "high"}
 ALLOWED_PRIORITY = {"low", "medium", "high", "critical"}
@@ -22,11 +20,9 @@ DEFAULT_GROQ_MODEL = "groq/llama3-8b-8192"
 GROQ_MODEL_CANDIDATES = [
     "groq/llama3-8b-8192",
     "groq/llama3-70b-8192",
+    "groq/llama-3.1-8b-instant",
+    "groq/llama-3.1-70b-versatile",
 ]
-DEFAULT_MAX_TOKENS = 480
-DEFAULT_TEMPERATURE = 0.1
-
-logger = logging.getLogger(__name__)
 
 
 def _validate_provider_key(llm_model: str) -> None:
@@ -38,12 +34,13 @@ def _validate_provider_key(llm_model: str) -> None:
             raise RuntimeError("Groq API key not found. Set GROQ_API_KEY before running agents.")
         return
 
-    if model_name.startswith("gemini") or model_name.startswith("google/"):
-        if not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
-            raise RuntimeError(
-                "Gemini API key not found. Set GEMINI_API_KEY or GOOGLE_API_KEY before running agents."
-            )
-        return
+    # Gemini path intentionally disabled for Groq-only operation.
+    # if model_name.startswith("gemini") or model_name.startswith("google/"):
+    #     if not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+    #         raise RuntimeError(
+    #             "Gemini API key not found. Set GEMINI_API_KEY or GOOGLE_API_KEY before running agents."
+    #         )
+    #     return
 
     # xAI Grok style model aliases. We allow multiple env var names to reduce setup friction.
     if model_name.startswith("xai") or model_name.startswith("grok") or model_name.startswith("x-ai"):
@@ -70,16 +67,6 @@ def _coerce_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
-
-
-def _runtime_max_tokens() -> int:
-    value = _coerce_int(os.getenv("AGENT_MAX_TOKENS"), DEFAULT_MAX_TOKENS)
-    return max(128, min(2048, value))
-
-
-def _runtime_temperature() -> float:
-    value = _coerce_float(os.getenv("AGENT_TEMPERATURE"), DEFAULT_TEMPERATURE)
-    return max(0.0, min(1.0, value))
 
 
 def _extract_json_payload(text: str) -> Dict[str, Any]:
@@ -149,9 +136,7 @@ def _fallback_response(
     clean_input: Dict[str, Any],
     error: str = "LLM failed",
     attempted_models: list[str] | None = None,
-    error_type: str = "RuntimeError",
 ) -> Dict[str, Any]:
-    hint = _error_user_hint(error)
     return {
         "analysis_input": clean_input,
         "analyzer_output": {
@@ -163,16 +148,11 @@ def _fallback_response(
         "remediation_output": {
             "recommended_actions": ["Retry later", "Collect additional packet evidence"],
             "priority": "medium",
-            "notes": str(hint)[:140],
+            "notes": "Fallback response generated.",
         },
         "model_used": "none",
         "fallback_used": True,
         "attempted_models": attempted_models or [],
-        "error": {
-            "type": str(error_type)[:64],
-            "message": str(error)[:240],
-            "hint": str(hint)[:160],
-        },
     }
 
 
@@ -188,8 +168,9 @@ def _normalize_model_name(model_name: str) -> str:
 
 def _provider_family(model_name: str) -> str:
     model_name = str(model_name or "").strip().lower()
-    if model_name.startswith("gemini") or model_name.startswith("google/"):
-        return "gemini"
+    # Gemini family intentionally disabled.
+    # if model_name.startswith("gemini") or model_name.startswith("google/"):
+    #     return "gemini"
     if model_name.startswith("groq"):
         return "groq"
     if model_name.startswith("xai") or model_name.startswith("grok") or model_name.startswith("x-ai"):
@@ -210,37 +191,20 @@ def _is_rate_limit_error(error_text: str) -> bool:
     )
 
 
-def _error_user_hint(error_text: str) -> str:
-    text = str(error_text or "").lower()
-    if _is_rate_limit_error(text):
-        return "Provider rate/quota limit hit. Reduce analysis count, add delay, or switch to a lower-cost model."
-    if "api key" in text or "unauthorized" in text or "authentication" in text:
-        return "API key missing/invalid for the selected provider. Verify .env key names and value."
-    if "model" in text and ("not found" in text or "does not exist" in text):
-        return "Selected model is unavailable for this account. Try the default configured model."
-    return "Agent call failed. Check terminal logs for provider error details and retry."
-
-
 def _candidate_models(primary_model: str) -> list[str]:
     primary_normalized = _normalize_model_name(primary_model)
-    if not primary_normalized:
-        primary_normalized = DEFAULT_GROQ_MODEL
     candidates = [primary_normalized]
     family = _provider_family(primary_normalized)
 
     if family == "groq":
         candidates.extend(GROQ_MODEL_CANDIDATES)
-        if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
-            candidates.append("gemini/gemini-1.5-flash")
-    elif family == "gemini":
-        candidates.append("gemini/gemini-1.5-flash")
-        if os.getenv("GROQ_API_KEY"):
-            candidates.extend(GROQ_MODEL_CANDIDATES)
 
+    # If selected provider is throttled, try the other provider automatically.
     if family in {"unknown"} and os.getenv("GROQ_API_KEY"):
         candidates.extend(GROQ_MODEL_CANDIDATES)
-    if family in {"unknown"} and (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
-        candidates.append("gemini/gemini-1.5-flash")
+    # Gemini fallback intentionally disabled for Groq-only operation.
+    # if family in {"groq", "grok", "unknown"} and (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
+    #     candidates.append(DEFAULT_GEMINI_MODEL)
 
     unique: list[str] = []
     seen = set()
@@ -253,14 +217,9 @@ def _candidate_models(primary_model: str) -> list[str]:
 
 
 def _run_single_model(clean_input: Dict[str, Any], llm_model: str) -> Dict[str, Any]:
-    normalized_model = _normalize_model_name(llm_model)
-    _validate_provider_key(normalized_model)
+    _validate_provider_key(llm_model)
 
-    llm = LLM(
-        model=normalized_model,
-        max_tokens=_runtime_max_tokens(),
-        temperature=_runtime_temperature(),
-    )
+    llm = LLM(model=llm_model, max_tokens=220, temperature=0.1)
 
     agent = Agent(
         role="SOC analyst",
@@ -301,7 +260,6 @@ def run_agents(payload: Dict[str, Any], llm_model: str = DEFAULT_GROQ_MODEL) -> 
     clean_input = _sanitize_input(payload)
     attempted_models: list[str] = []
     last_error = "LLM failed"
-    last_error_type = "RuntimeError"
 
     for candidate_model in _candidate_models(llm_model):
         attempted_models.append(candidate_model)
@@ -309,23 +267,12 @@ def run_agents(payload: Dict[str, Any], llm_model: str = DEFAULT_GROQ_MODEL) -> 
         for attempt in range(2):
             try:
                 result = _run_single_model(clean_input, candidate_model)
-                normalized_candidate = _normalize_model_name(candidate_model)
-                result["model_used"] = normalized_candidate
-                result["fallback_used"] = normalized_candidate != _normalize_model_name(llm_model)
+                result["model_used"] = candidate_model
+                result["fallback_used"] = candidate_model != _normalize_model_name(llm_model)
                 result["attempted_models"] = attempted_models.copy()
                 return result
             except Exception as exc:
-                error_type = type(exc).__name__
-                last_error = f"{candidate_model}: {error_type}: {exc}"
-                last_error_type = error_type
-                logger.warning(
-                    "Agent call failed | model=%s | attempt=%s | error_type=%s | error=%s",
-                    candidate_model,
-                    attempt + 1,
-                    error_type,
-                    exc,
-                    exc_info=True,
-                )
+                last_error = f"{candidate_model}: {exc}"
 
                 if _is_rate_limit_error(str(exc)) and attempt < 1:
                     # Small backoff helps with per-minute/provider burst throttling.
@@ -338,7 +285,6 @@ def run_agents(payload: Dict[str, Any], llm_model: str = DEFAULT_GROQ_MODEL) -> 
         clean_input,
         error=f"{last_error} | tried={attempted_models}",
         attempted_models=attempted_models,
-        error_type=last_error_type,
     )
 
 

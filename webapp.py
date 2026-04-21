@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import pickle
 import tempfile
+import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -368,6 +369,10 @@ def _render_analysis_card(item: Dict[str, Any]) -> None:
     actions_html = "".join(f"<li>{html.escape(str(a))}</li>" for a in actions) or "<li>No action provided</li>"
 
     flow = f"{html.escape(str(item.get('src_ip', 'N/A')))} -> {html.escape(str(item.get('dst_ip', 'N/A')))}"
+    fallback_used = bool(item.get("fallback_used", False))
+    error_hint = str(item.get("error_hint", "")).strip()
+    fallback_chip = '<span class="metric-chip chip-amber">Fallback</span>' if fallback_used else ""
+    fallback_note = f"<p><b>Agent Notice:</b> {html.escape(error_hint)}</p>" if error_hint else ""
     st.markdown(
         f"""
         <div class="agent-card">
@@ -376,9 +381,11 @@ def _render_analysis_card(item: Dict[str, Any]) -> None:
                 <span class="metric-chip chip-red">Threat</span>
                 <span class="metric-chip {priority_class}">Priority: {html.escape(priority.upper())}</span>
                 <span class="metric-chip chip-amber">Confidence: {html.escape(str(analyzer.get('confidence', 'low')).upper())}</span>
+                {fallback_chip}
             </div>
             <p><b>Flow:</b> {flow}</p>
             <p><b>Root Cause:</b> {html.escape(str(analyzer.get('cause', 'Unknown')))}</p>
+            {fallback_note}
             <p><b>Evidence:</b></p>
             <ul>{evidence_html}</ul>
             <p><b>Remediation:</b></p>
@@ -598,7 +605,7 @@ def main() -> None:
                         preprocessor_path=preprocessor_path,
                         batch_size=int(batch_size),
                         run_agent_analysis=False,
-                        llm_model="gemini/gemini-1.5-flash",
+                        llm_model="groq/llama3-8b-8192",
                         max_agent_items=3,
                     )
                     st.session_state["detection_result"] = result
@@ -679,11 +686,21 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    llm_col1, llm_col2 = st.columns([2, 1])
+    llm_col1, llm_col2, llm_col3 = st.columns([2, 1, 1])
     with llm_col1:
-        llm_model = st.text_input("LLM model", value="gemini/gemini-1.5-flash", key="analysis_llm_model")
+        llm_model = st.text_input("LLM model", value="groq/llama3-8b-8192", key="analysis_llm_model")
     with llm_col2:
         max_agent_items = st.number_input("Max anomaly analyses", min_value=1, max_value=50, value=5, step=1, key="analysis_max_items")
+    with llm_col3:
+        agent_call_delay = st.number_input(
+            "Delay per call (s)",
+            min_value=0.0,
+            max_value=10.0,
+            value=0.8,
+            step=0.2,
+            key="analysis_call_delay",
+            help="Adds a pause between agent calls to reduce 429 rate-limit errors.",
+        )
 
     run_analysis_btn = st.button(
         "Run Stage 2: Agent Analysis and Remediation",
@@ -727,6 +744,12 @@ def main() -> None:
                 agent_result = run_agents(payload, llm_model=llm_model)
                 analyzer = agent_result.get("analyzer_output", {})
                 remediation = agent_result.get("remediation_output", {})
+                model_used = str(agent_result.get("model_used", "none"))
+                fallback_used = bool(agent_result.get("fallback_used", False))
+                attempted_models = agent_result.get("attempted_models", []) or []
+                error_meta = agent_result.get("error", {}) or {}
+                error_type = str(error_meta.get("type", "")).strip()
+                error_hint = str(error_meta.get("hint", "")).strip()
                 analysis_results.append(
                     {
                         "prediction": row.get("predicted_label", "unknown"),
@@ -734,11 +757,19 @@ def main() -> None:
                         "dst_ip": row.get("dst_ip", "N/A"),
                         "analyzer_output": analyzer,
                         "remediation_output": remediation,
+                        "model_used": model_used,
+                        "fallback_used": fallback_used,
+                        "attempted_models": attempted_models,
+                        "error_type": error_type,
+                        "error_hint": error_hint,
                     }
                 )
 
                 agent_log_lines.append(
-                    f"   -> cause={analyzer.get('cause', 'unknown')} | priority={remediation.get('priority', 'medium')}"
+                    f"   -> model={model_used}{' (fallback)' if fallback_used else ''} | "
+                    f"attempted={','.join(str(m) for m in attempted_models) if attempted_models else 'none'} | "
+                    f"cause={analyzer.get('cause', 'unknown')} | priority={remediation.get('priority', 'medium')}"
+                    f"{f' | error={error_type}' if error_type else ''}"
                 )
                 log_placeholder.markdown(_format_log_box(agent_log_lines[-20:]), unsafe_allow_html=True)
                 progress.progress(
@@ -746,9 +777,26 @@ def main() -> None:
                     text=f"Processed {idx + 1}/{total_agent_tasks} agent tasks",
                 )
 
+                if idx < total_agent_tasks - 1 and float(agent_call_delay) > 0:
+                    time.sleep(float(agent_call_delay))
+
             progress.empty()
             st.session_state["analysis_result"] = analysis_results
-            st.success("Stage 2 complete.")
+            fallback_count = sum(1 for item in analysis_results if item.get("fallback_used"))
+            if analysis_results and fallback_count == len(analysis_results):
+                top_hints = [
+                    str(item.get("error_hint", "")).strip()
+                    for item in analysis_results
+                    if str(item.get("error_hint", "")).strip()
+                ]
+                hint_text = top_hints[0] if top_hints else "Agent provider requests failed. Check provider key, model access, and quota."
+                st.error(f"Stage 2 failed: all agent calls fell back. {hint_text}")
+            elif fallback_count:
+                st.warning(
+                    f"Stage 2 completed with partial fallback ({fallback_count}/{len(analysis_results)} calls)."
+                )
+            else:
+                st.success("Stage 2 complete.")
 
     analysis_result = st.session_state.get("analysis_result")
     if analysis_result:
@@ -762,7 +810,13 @@ def main() -> None:
         )
         summary_col1.metric("Cases analyzed", len(analysis_result))
         summary_col2.metric("High/Critical priority", high_priority)
-        summary_col3.metric("LLM model", llm_model)
+        fallback_count = sum(1 for item in analysis_result if item.get("fallback_used"))
+        summary_col3.metric("Fallback hits", fallback_count)
+        if fallback_count:
+            hints = [str(item.get("error_hint", "")).strip() for item in analysis_result if item.get("fallback_used")]
+            hints = [hint for hint in hints if hint]
+            if hints:
+                st.warning(f"Some agent calls used fallback logic. Most common reason: {hints[0]}")
 
         left, right = st.columns(2)
         for idx, item in enumerate(analysis_result):
