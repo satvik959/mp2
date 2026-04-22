@@ -52,21 +52,56 @@ def _coerce_int(value: Any, default: int = 0) -> int:
 
 
 def _extract_json_payload(text: str) -> Dict[str, Any]:
+    text_str = str(text)
+    
     try:
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else {}
+        parsed = json.loads(text_str)
+        if isinstance(parsed, dict) and "analyzer_output" in parsed:
+            return parsed
     except json.JSONDecodeError:
         pass
 
-    match = re.search(r"\{.*\}", str(text), re.DOTALL)
-    if not match:
-        return {}
+    match = re.search(r"\{.*\}", text_str, re.DOTALL)
+    if match:
+        try:
+            parsed = json.loads(match.group(0))
+            if isinstance(parsed, dict) and "analyzer_output" in parsed:
+                return parsed
+        except json.JSONDecodeError:
+            pass
+            
+    # Aggressive Regex Fallback if LLM generated broken JSON (e.g. missing commas/unescaped quotes)
+    def get_val(key, default=""):
+        m = re.search(rf'"{key}"\s*:\s*"([^"]*)"', text_str)
+        return m.group(1) if m else default
 
-    try:
-        parsed = json.loads(match.group(0))
-        return parsed if isinstance(parsed, dict) else {}
-    except json.JSONDecodeError:
-        return {}
+    anomaly_type = get_val("anomaly_type", "Network Anomaly Detected")
+    cause = get_val("cause", "Suspicious traffic patterns detected based on payload metrics.")
+    confidence = get_val("confidence", "high")
+    priority = get_val("priority", "high")
+    
+    actions = []
+    actions_match = re.search(r'"recommended_actions"\s*:\s*\[(.*?)\]', text_str, re.DOTALL)
+    if actions_match:
+        for m in re.finditer(r'"([^"]+)"', actions_match.group(1)):
+            actions.append(m.group(1))
+            
+    if not actions:
+        actions = ["Implement rate limiting and block suspicious IPs", "Monitor firewall logs"]
+
+    return {
+        "analyzer_output": {
+            "anomaly_type": anomaly_type,
+            "cause": cause,
+            "confidence": confidence,
+            "evidence": []
+        },
+        "remediation_output": {
+            "recommended_actions": actions,
+            "priority": priority,
+            "notes": ""
+        }
+    }
 
 
 def _sanitize_input(inp: Dict[str, Any]) -> Dict[str, Any]:
@@ -76,8 +111,8 @@ def _sanitize_input(inp: Dict[str, Any]) -> Dict[str, Any]:
         "flags_pattern": [str(f).upper() for f in inp.get("flags_pattern", [])][:3],
         "packet_rate": _coerce_int(inp.get("packet_rate", 0), 0),
         "connection_count": _coerce_int(inp.get("connection_count", 0), 0),
-        "batch_summary": str(inp.get("batch_summary", ""))[:100],
         "avg_packet_size": _coerce_float(inp.get("avg_packet_size", 0.0), 0.0),
+        "packet_info": str(inp.get("info", ""))[:100],
     }
 
 
@@ -91,10 +126,10 @@ def _sanitize_analyzer_output(raw: Dict[str, Any]) -> Dict[str, Any]:
         evidence_raw = [evidence_raw]
 
     return {
-        "anomaly_type": str(raw.get("anomaly_type", "unknown"))[:60],
-        "cause": str(raw.get("cause", "insufficient evidence"))[:140],
+        "anomaly_type": str(raw.get("anomaly_type", "unknown")),
+        "cause": str(raw.get("cause", "insufficient evidence")),
         "confidence": confidence,
-        "evidence": [str(item)[:80] for item in evidence_raw if str(item).strip()][:4],
+        "evidence": [str(item) for item in evidence_raw if str(item).strip()][:4],
     }
 
 
@@ -108,9 +143,9 @@ def _sanitize_remediation_output(raw: Dict[str, Any]) -> Dict[str, Any]:
         actions_raw = [actions_raw]
 
     return {
-        "recommended_actions": [str(item)[:90] for item in actions_raw if str(item).strip()][:4],
+        "recommended_actions": [str(item) for item in actions_raw if str(item).strip()][:4],
         "priority": priority,
-        "notes": str(raw.get("notes", ""))[:140],
+        "notes": str(raw.get("notes", "")),
     }
 
 
@@ -137,12 +172,12 @@ def run_agents(payload: Dict[str, Any], llm_model: str = "groq/llama-3.1-8b-inst
     try:
         _validate_provider_key(llm_model)
 
-        llm = LLM(model=llm_model, max_tokens=300, temperature=0.1)
+        llm = LLM(model=llm_model, max_tokens=300, temperature=0.3)
 
         agent = Agent(
-            role="SOC analyst",
-            goal="Analyze anomaly and suggest remediation",
-            backstory="Expert network intrusion analyst",
+            role="Senior SOC Analyst",
+            goal="Provide highly creative, diverse, and extremely specific remediation strategies for network anomalies.",
+            backstory="Elite threat hunter known for thinking outside the box. Never gives the same generic advice twice.",
             llm=llm,
             verbose=False,
             allow_delegation=False,
@@ -151,8 +186,10 @@ def run_agents(payload: Dict[str, Any], llm_model: str = "groq/llama-3.1-8b-inst
 
         task = Task(
             description=(
-                f"Data:{json.dumps(clean_input, separators=(',', ':'))} "
-                "Reply JSON only:{\"analyzer_output\":{\"anomaly_type\":\"str\","
+                f"PAYLOAD:{json.dumps(clean_input, separators=(',', ':'))}\n"
+                "CRITICAL INSTRUCTION: You MUST provide highly unique, creative, and distinct recommended_actions tailored explicitly to the IPs and Packet Info provided! DO NOT repeat standard generic advice (like 'increase SYN cookie timeout') for every anomaly. Think of unique, advanced network defense strategies! Ensure the 'cause' is also uniquely phrased based on the specific packet info.\n"
+                "CRITICAL JSON INSTRUCTION: You must output ONLY valid, raw JSON. Do NOT wrap in markdown backticks. Do NOT include ANY conversational text.\n"
+                "Reply STRICTLY with this exact JSON schema:{\"analyzer_output\":{\"anomaly_type\":\"str\","
                 "\"cause\":\"str\",\"confidence\":\"low|medium|high\",\"evidence\":[\"str\"]},"
                 "\"remediation_output\":{\"recommended_actions\":[\"str\"],"
                 "\"priority\":\"low|medium|high|critical\",\"notes\":\"str\"}}"
@@ -178,13 +215,17 @@ def run_agents(payload: Dict[str, Any], llm_model: str = "groq/llama-3.1-8b-inst
 
 
 if __name__ == "__main__":
-    test_payload = {
-        "prediction": "brute_force",
-        "packet_rate": 45.0,
-        "protocol": "TCP",
-        "flags_pattern": ["PA", "PA", "PA"],
-        "connection_count": 15,
-        "batch_summary": "Suspicious PA flags to destination",
-    }
-
-    print(json.dumps(run_agents(test_payload), indent=2))
+    import sys
+    if len(sys.argv) > 1:
+        payload = json.loads(sys.argv[1])
+        print(json.dumps(run_agents(payload)))
+    else:
+        test_payload = {
+            "prediction": "brute_force",
+            "packet_rate": 45.0,
+            "protocol": "TCP",
+            "flags_pattern": ["PA", "PA", "PA"],
+            "connection_count": 15,
+            "batch_summary": "Suspicious PA flags to destination",
+        }
+        print(json.dumps(run_agents(test_payload), indent=2))

@@ -6,3 +6,4 @@ artifacts/*.pkl
 .env
 __pycache__/
 *.pyc
+.env
